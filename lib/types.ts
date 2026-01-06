@@ -7,10 +7,16 @@ export type WorkflowNodeType =
   | "航线规划"
   | "航点设置"
   | "起飞"
-  | "定时拍照"
+  | "降落"
+  | "悬停"
+  | "飞行"
+  | "拍照"
+  | "录像"
   | "电量检查"
+  | "避障"
   | "返航"
-  | "降落";
+  | "条件判断"
+  | "定时拍照";
 
 export type WorkflowNode = {
   id: string;

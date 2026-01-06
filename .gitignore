@@ -1,1 +1,18 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Next.js build output
+.next/
+
+# Environment variables
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE
+/.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

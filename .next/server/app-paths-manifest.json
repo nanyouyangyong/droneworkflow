@@ -1,5 +1,4 @@
 {
-  "/api/workflow/state/route": "app/api/workflow/state/route.js",
-  "/api/workflow/execute/route": "app/api/workflow/execute/route.js",
+  "/api/llm/parse/route": "app/api/llm/parse/route.js",
   "/page": "app/page.js"
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import ReactFlow, {
   Background,
   type Connection,
@@ -86,6 +86,10 @@ export default function WorkflowCanvas() {
     edge?: Edge;
   } | null>(null);
 
+  // Track if changes are from internal edits to prevent resetting
+  const isInternalEdit = useRef(false);
+  const lastWorkflowRef = useRef<string | null>(null);
+
   const initial = useMemo(() => {
     if (!workflow) return { nodes: [], edges: [] };
     return wfToReactFlow(workflow);
@@ -94,15 +98,31 @@ export default function WorkflowCanvas() {
   const [nodes, setNodes, onNodesChangeInternal] = useNodesState(initial.nodes);
   const [edges, setEdges, onEdgesChangeInternal] = useEdgesState(initial.edges);
 
+  // Only sync from workflow to canvas when workflow changes externally (e.g., from LLM)
   useEffect(() => {
     if (!workflow) {
       setNodes([]);
       setEdges([]);
+      lastWorkflowRef.current = null;
       return;
     }
-    const next = wfToReactFlow(workflow);
-    setNodes(next.nodes);
-    setEdges(next.edges);
+    
+    const workflowStr = JSON.stringify(workflow);
+    
+    // Skip if this is an internal edit (we just updated the workflow ourselves)
+    if (isInternalEdit.current) {
+      isInternalEdit.current = false;
+      lastWorkflowRef.current = workflowStr;
+      return;
+    }
+    
+    // Only update canvas if workflow actually changed from external source
+    if (lastWorkflowRef.current !== workflowStr) {
+      const next = wfToReactFlow(workflow);
+      setNodes(next.nodes);
+      setEdges(next.edges);
+      lastWorkflowRef.current = workflowStr;
+    }
   }, [setEdges, setNodes, workflow]);
 
   const onConnect = useCallback(
@@ -139,6 +159,7 @@ export default function WorkflowCanvas() {
       const updatedWorkflow = reactFlowToWf(nodes, edges);
       // Only update if the workflow actually changed
       if (JSON.stringify(updatedWorkflow) !== JSON.stringify(workflow)) {
+        isInternalEdit.current = true;
         setWorkflow(updatedWorkflow);
       }
     }

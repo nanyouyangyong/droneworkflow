@@ -1,6 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import {
+  useMemo,
+  useState,
+  useRef,
+  useEffect,
+  type KeyboardEvent as ReactKeyboardEvent
+} from "react";
 import { useAppStore } from "@/store/useAppStore";
 
 const models = ["gpt-4", "claude-3.5", "deepseek-coder", "local-llm"] as const;
@@ -14,11 +20,19 @@ export default function ChatPanel() {
 
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const placeholder = useMemo(
     () => "描述你的无人机任务，如：'巡查A区域并拍照，电量低于30%时返航'",
     []
   );
+
+  // Auto scroll to bottom when new messages arrive
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, busy]);
 
   async function onSend() {
     const text = input.trim();
@@ -51,12 +65,39 @@ export default function ChatPanel() {
     }
   }
 
+  const handleKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      onSend();
+    }
+  };
+
+  const formatTime = (ts: number) => {
+    try {
+      return new Date(ts).toLocaleTimeString("zh-CN", {
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    } catch {
+      return "";
+    }
+  };
+
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-        <div className="text-sm font-semibold">大模型对话</div>
+    <div className="flex h-full flex-col bg-[#f7f7f8]">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-slate-200 bg-white/80 px-4 py-3 backdrop-blur">
+        <div className="flex items-center gap-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-slate-900 text-white">
+            AI
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-slate-900">大模型对话</div>
+            <div className="text-xs text-slate-500">生成工作流并支持继续追问</div>
+          </div>
+        </div>
         <select
-          className="rounded border border-slate-200 bg-white px-2 py-1 text-sm"
+          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm outline-none focus:ring-2 focus:ring-slate-900/10"
           value={model}
           onChange={(e) => setModel(e.target.value)}
         >
@@ -68,40 +109,119 @@ export default function ChatPanel() {
         </select>
       </div>
 
-      <div className="flex-1 overflow-auto p-4">
-        {messages.length === 0 ? (
-          <div className="text-sm text-slate-500">在左下角输入指令开始。</div>
-        ) : (
-          <div className="space-y-3">
-            {messages.map((m) => (
-              <div key={m.id} className="text-sm">
-                <div className="mb-1 font-medium text-slate-700">
-                  {m.role === "user" ? "用户" : "助手"}
+      {/* Messages Area */}
+      <div ref={scrollRef} className="flex-1 overflow-auto">
+        <div className="mx-auto w-full max-w-[820px] px-4 py-6">
+          {messages.length === 0 ? (
+            <div className="flex min-h-[60vh] items-center justify-center">
+              <div className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="text-lg font-semibold text-slate-900">开始描述你的任务</div>
+                <div className="mt-1 text-sm text-slate-600">
+                  我会把你的自然语言指令解析为可编辑的工作流。
                 </div>
-                <div className="whitespace-pre-wrap rounded border border-slate-200 bg-slate-50 p-2">
-                  {m.content}
+                <div className="mt-4 grid gap-2 text-sm">
+                  <div className="rounded-2xl bg-slate-50 px-4 py-3 text-slate-700">
+                    巡查 A 区域并拍照，电量低于 30% 时返航
+                  </div>
+                  <div className="rounded-2xl bg-slate-50 px-4 py-3 text-slate-700">
+                    起飞到 20 米，飞行到坐标点，悬停 10 秒后录像
+                  </div>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          ) : (
+            <div className="space-y-5">
+              {messages.map((m) => {
+                const isUser = m.role === "user";
+
+                if (isUser) {
+                  return (
+                    <div key={m.id} className="w-full">
+                      <div className="flex justify-end">
+                        <div className="w-full max-w-[820px]">
+                          <div className="mb-2 flex justify-end">
+                            <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-blue-600 text-xs font-semibold text-white shadow-sm">
+                              U
+                            </div>
+                          </div>
+                          <div className="flex justify-end">
+                            <div className="max-w-[92%] rounded-2xl bg-gradient-to-r from-slate-900 to-slate-800 px-4 py-3 text-white shadow-sm ring-1 ring-slate-900">
+                              <div className="whitespace-pre-wrap break-words text-[14px] leading-6">
+                                {m.content}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="mt-1 text-right text-xs text-slate-400">
+                            {formatTime(m.ts)}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div key={m.id} className="flex justify-start">
+                    <div className="mr-3 mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-900 to-slate-600 text-xs font-semibold text-white">
+                      AI
+                    </div>
+                    <div className="max-w-[82%] min-w-0">
+                      <div className="rounded-3xl bg-white px-4 py-3 text-slate-800 shadow-sm ring-1 ring-slate-200">
+                        <div className="whitespace-pre-wrap break-words text-[14px] leading-6">
+                          {m.content}
+                        </div>
+                      </div>
+                      <div className="mt-1 text-left text-xs text-slate-400">{formatTime(m.ts)}</div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {busy && (
+                <div className="flex justify-start">
+                  <div className="mr-3 mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-900 to-slate-600 text-xs font-semibold text-white">
+                    AI
+                  </div>
+                  <div className="max-w-[82%]">
+                    <div className="rounded-3xl bg-white px-4 py-3 shadow-sm ring-1 ring-slate-200">
+                      <div className="flex items-center gap-2 text-sm text-slate-500">
+                        <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-slate-400" />
+                        <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-slate-400 [animation-delay:150ms]" />
+                        <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-slate-400 [animation-delay:300ms]" />
+                        <span className="ml-2">正在生成工作流…</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="border-t border-slate-200 p-3">
-        <textarea
-          className="h-24 w-full resize-none rounded border border-slate-200 p-2 text-sm outline-none focus:border-slate-400"
-          placeholder={placeholder}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-        />
-        <div className="mt-2 flex justify-end">
-          <button
-            className="rounded bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50"
-            onClick={onSend}
-            disabled={busy || !input.trim()}
-          >
-            {busy ? "解析中..." : "发送并生成工作流"}
-          </button>
+      {/* Input Area */}
+      <div className="border-t border-slate-200 bg-white/80 backdrop-blur">
+        <div className="mx-auto w-full max-w-[820px] px-4 py-4">
+          <div className="flex items-end gap-3 rounded-3xl border border-slate-200 bg-white px-3 py-3 shadow-sm focus-within:ring-2 focus-within:ring-slate-900/10">
+            <textarea
+              className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1 text-sm leading-6 text-slate-800 outline-none placeholder:text-slate-400"
+              placeholder={placeholder}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              rows={2}
+            />
+            <button
+              className="inline-flex h-10 items-center justify-center rounded-2xl bg-slate-900 px-4 text-sm font-medium text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-40"
+              onClick={onSend}
+              disabled={busy || !input.trim()}
+            >
+              {busy ? "生成中" : "发送"}
+            </button>
+          </div>
+          <div className="mt-2 text-xs text-slate-400">Enter 发送，Shift + Enter 换行</div>
         </div>
       </div>
     </div>

@@ -6,6 +6,11 @@ node_modules/
 /.next/
 /out/
 
+# Specific .next subdirectories to ignore
+.next/cache/
+.next/server/
+.next/static/
+
 # Environment variables
 .env.local
 .env.development.local

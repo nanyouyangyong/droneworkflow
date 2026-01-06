@@ -2,7 +2,9 @@
 node_modules/
 
 # Next.js build output
-.next/
+# next.js
+/.next/
+/out/
 
 # Environment variables
 .env.local
@@ -16,3 +18,4 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+next-env.d.ts

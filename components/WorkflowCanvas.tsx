@@ -16,8 +16,10 @@ import ReactFlow, {
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { useAppStore } from "@/store/useAppStore";
-import type { ParsedWorkflow, WorkflowNode } from "@/lib/types";
+import type { ParsedWorkflow, WorkflowNode, WorkflowEdge } from "@/lib/types";
 import NodeEditor from "@/components/NodeEditor";
+import EdgeEditor from "@/components/EdgeEditor";
+import ContextMenu from "@/components/ContextMenu";
 
 function wfToReactFlow(wf: ParsedWorkflow): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = wf.nodes.map((n, idx) => ({
@@ -73,6 +75,16 @@ export default function WorkflowCanvas() {
   
   const [selectedNode, setSelectedNode] = useState<WorkflowNode | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [selectedEdge, setSelectedEdge] = useState<WorkflowEdge | null>(null);
+  const [isEdgeEditorOpen, setIsEdgeEditorOpen] = useState(false);
+  
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    node?: Node;
+    edge?: Edge;
+  } | null>(null);
 
   const initial = useMemo(() => {
     if (!workflow) return { nodes: [], edges: [] };
@@ -96,7 +108,7 @@ export default function WorkflowCanvas() {
   const onConnect = useCallback(
     (connection: Connection) => {
       if (!connection.source || !connection.target) return;
-      setEdges((eds) => [
+      setEdges((eds:any) => [
         ...eds,
         {
           ...connection,
@@ -132,6 +144,101 @@ export default function WorkflowCanvas() {
     }
   }, [nodes, edges]); // Remove setWorkflow and workflow from dependencies
 
+  // Handle keyboard events for delete
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        // Delete selected nodes and edges
+        const selectedNodes = nodes.filter(n => n.selected);
+        const selectedEdges = edges.filter(e => e.selected);
+        
+        if (selectedNodes.length > 0 || selectedEdges.length > 0) {
+          const nodeIds = selectedNodes.map(n => n.id);
+          const edgeIds = selectedEdges.map(e => e.id);
+          
+          setNodes(currentNodes => currentNodes.filter(n => !nodeIds.includes(n.id)));
+          setEdges(currentEdges => currentEdges.filter(e => !edgeIds.includes(e.id)));
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [nodes, edges, setNodes, setEdges]);
+
+  // Close context menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => setContextMenu(null);
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, []);
+
+  const onNodeContextMenu = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      event.preventDefault();
+      setContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        node
+      });
+    },
+    []
+  );
+
+  const onEdgeContextMenu = useCallback(
+    (event: React.MouseEvent, edge: Edge) => {
+      event.preventDefault();
+      setContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        edge
+      });
+    },
+    []
+  );
+
+  const handleContextMenuEditNode = useCallback(
+    (node: Node) => {
+      const workflowNode: WorkflowNode = {
+        id: node.id,
+        type: node.data.nodeType || node.data.label,
+        label: node.data.label,
+        params: node.data.params || {}
+      };
+      setSelectedNode(workflowNode);
+      setIsEditorOpen(true);
+    },
+    []
+  );
+
+  const handleContextMenuEditEdge = useCallback(
+    (edge: Edge) => {
+      const workflowEdge: WorkflowEdge = {
+        id: edge.id,
+        from: edge.source,
+        to: edge.target,
+        condition: edge.label as string || undefined
+      };
+      setSelectedEdge(workflowEdge);
+      setIsEdgeEditorOpen(true);
+    },
+    []
+  );
+
+  const handleContextMenuDeleteNode = useCallback(
+    (nodeId: string) => {
+      setNodes(currentNodes => currentNodes.filter(n => n.id !== nodeId));
+    },
+    []
+  );
+
+  const handleContextMenuDeleteEdge = useCallback(
+    (edgeId: string) => {
+      setEdges(currentEdges => currentEdges.filter(e => e.id !== edgeId));
+    },
+    []
+  );
+
   const onNodeDoubleClick = useCallback(
     (event: React.MouseEvent, node: Node) => {
       const workflowNode: WorkflowNode = {
@@ -142,6 +249,20 @@ export default function WorkflowCanvas() {
       };
       setSelectedNode(workflowNode);
       setIsEditorOpen(true);
+    },
+    []
+  );
+
+  const onEdgeDoubleClick = useCallback(
+    (event: React.MouseEvent, edge: Edge) => {
+      const workflowEdge: WorkflowEdge = {
+        id: edge.id,
+        from: edge.source,
+        to: edge.target,
+        condition: edge.label as string || undefined
+      };
+      setSelectedEdge(workflowEdge);
+      setIsEdgeEditorOpen(true);
     },
     []
   );
@@ -207,6 +328,23 @@ export default function WorkflowCanvas() {
     [setNodes, edges]
   );
 
+  const handleEdgeUpdate = useCallback(
+    (updatedEdge: WorkflowEdge) => {
+      setEdges((eds) => {
+        const updatedEdges = eds.map(e => 
+          e.id === updatedEdge.id 
+            ? {
+                ...e,
+                label: updatedEdge.condition
+              }
+            : e
+        );
+        return updatedEdges;
+      });
+    },
+    [setEdges, nodes]
+  );
+
   async function onExecute() {
     if (!workflow) return;
 
@@ -252,6 +390,9 @@ export default function WorkflowCanvas() {
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onNodeDoubleClick={onNodeDoubleClick}
+          onEdgeDoubleClick={onEdgeDoubleClick}
+          onNodeContextMenu={onNodeContextMenu}
+          onEdgeContextMenu={onEdgeContextMenu}
           onDragOver={onDragOver}
           onDrop={onDrop}
           fitView
@@ -261,6 +402,20 @@ export default function WorkflowCanvas() {
           <Controls />
         </ReactFlow>
         
+        {contextMenu && (
+          <ContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            onClose={() => setContextMenu(null)}
+            onEditNode={handleContextMenuEditNode}
+            onEditEdge={handleContextMenuEditEdge}
+            onDeleteNode={handleContextMenuDeleteNode}
+            onDeleteEdge={handleContextMenuDeleteEdge}
+            selectedNode={contextMenu.node}
+            selectedEdge={contextMenu.edge}
+          />
+        )}
+        
         {isEditorOpen && (
           <NodeEditor
             node={selectedNode}
@@ -268,6 +423,17 @@ export default function WorkflowCanvas() {
             onClose={() => {
               setIsEditorOpen(false);
               setSelectedNode(null);
+            }}
+          />
+        )}
+        
+        {isEdgeEditorOpen && (
+          <EdgeEditor
+            edge={selectedEdge}
+            onEdgeUpdate={handleEdgeUpdate}
+            onClose={() => {
+              setIsEdgeEditorOpen(false);
+              setSelectedEdge(null);
             }}
           />
         )}

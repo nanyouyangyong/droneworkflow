@@ -10,9 +10,7 @@ import ReactFlow, {
   useEdgesState,
   useNodesState,
   type OnNodesChange,
-  type OnEdgesChange,
-  applyNodeChanges,
-  applyEdgeChanges
+  type OnEdgesChange
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { useAppStore } from "@/store/useAppStore";
@@ -20,6 +18,9 @@ import type { ParsedWorkflow, WorkflowNode, WorkflowEdge } from "@/lib/types";
 import NodeEditor from "@/components/NodeEditor";
 import EdgeEditor from "@/components/EdgeEditor";
 import ContextMenu from "@/components/ContextMenu";
+
+const NODE_TYPES = {} as const;
+const EDGE_TYPES = {} as const;
 
 function wfToReactFlow(wf: ParsedWorkflow): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = wf.nodes.map((n, idx) => ({
@@ -44,7 +45,7 @@ function wfToReactFlow(wf: ParsedWorkflow): { nodes: Node[]; edges: Edge[] } {
   return { nodes, edges };
 }
 
-function reactFlowToWf(nodes: Node[], edges: Edge[]): ParsedWorkflow {
+function reactFlowToWf(nodes: Node[], edges: Edge[], workflowName: string): ParsedWorkflow {
   const workflowNodes: WorkflowNode[] = nodes.map(n => ({
     id: n.id,
     type: n.data.nodeType || n.data.label,
@@ -60,7 +61,7 @@ function reactFlowToWf(nodes: Node[], edges: Edge[]): ParsedWorkflow {
   }));
 
   return {
-    workflow_name: "自定义工作流",
+    workflow_name: workflowName,
     nodes: workflowNodes,
     edges: workflowEdges
   };
@@ -86,9 +87,8 @@ export default function WorkflowCanvas() {
     edge?: Edge;
   } | null>(null);
 
-  // Track if changes are from internal edits to prevent resetting
-  const isInternalEdit = useRef(false);
-  const lastWorkflowRef = useRef<string | null>(null);
+  // Dedupe workflow <-> canvas syncing to avoid infinite loops / memory blowups
+  const lastSyncedWorkflowStrRef = useRef<string | null>(null);
 
   const initial = useMemo(() => {
     if (!workflow) return { nodes: [], edges: [] };
@@ -103,32 +103,25 @@ export default function WorkflowCanvas() {
     if (!workflow) {
       setNodes([]);
       setEdges([]);
-      lastWorkflowRef.current = null;
+      lastSyncedWorkflowStrRef.current = null;
       return;
     }
     
     const workflowStr = JSON.stringify(workflow);
-    
-    // Skip if this is an internal edit (we just updated the workflow ourselves)
-    if (isInternalEdit.current) {
-      isInternalEdit.current = false;
-      lastWorkflowRef.current = workflowStr;
-      return;
-    }
-    
-    // Only update canvas if workflow actually changed from external source
-    if (lastWorkflowRef.current !== workflowStr) {
+
+    // Only update canvas if workflow actually changed
+    if (lastSyncedWorkflowStrRef.current !== workflowStr) {
       const next = wfToReactFlow(workflow);
       setNodes(next.nodes);
       setEdges(next.edges);
-      lastWorkflowRef.current = workflowStr;
+      lastSyncedWorkflowStrRef.current = workflowStr;
     }
   }, [setEdges, setNodes, workflow]);
 
   const onConnect = useCallback(
     (connection: Connection) => {
       if (!connection.source || !connection.target) return;
-      setEdges((eds:any) => [
+      setEdges((eds) => [
         ...eds,
         {
           ...connection,
@@ -156,14 +149,19 @@ export default function WorkflowCanvas() {
   // Sync workflow data when nodes or edges change, but not during initial load
   useEffect(() => {
     if (workflow) {
-      const updatedWorkflow = reactFlowToWf(nodes, edges);
-      // Only update if the workflow actually changed
-      if (JSON.stringify(updatedWorkflow) !== JSON.stringify(workflow)) {
-        isInternalEdit.current = true;
+      const updatedWorkflow = reactFlowToWf(
+        nodes,
+        edges,
+        workflow.workflow_name ?? "自定义工作流"
+      );
+
+      const updatedStr = JSON.stringify(updatedWorkflow);
+      if (lastSyncedWorkflowStrRef.current !== updatedStr) {
+        lastSyncedWorkflowStrRef.current = updatedStr;
         setWorkflow(updatedWorkflow);
       }
     }
-  }, [nodes, edges]); // Remove setWorkflow and workflow from dependencies
+  }, [nodes, edges, workflow, setWorkflow]);
 
   // Handle keyboard events for delete
   useEffect(() => {
@@ -417,7 +415,8 @@ export default function WorkflowCanvas() {
           onDragOver={onDragOver}
           onDrop={onDrop}
           fitView
-          nodeTypes={{}}
+          nodeTypes={NODE_TYPES}
+          edgeTypes={EDGE_TYPES}
         >
           <Background variant="dots" gap={20} />
           <Controls />

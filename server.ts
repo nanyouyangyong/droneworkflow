@@ -1,9 +1,11 @@
+import "dotenv/config";
 import http from "http";
 import express from "express";
 import next from "next";
 import { Server as SocketIOServer } from "socket.io";
 import type { Request, Response } from "express";
 import type { Socket } from "socket.io";
+import { connectDB } from "@/lib/server/db";
 
 const dev = process.env.NODE_ENV !== "production";
 const app = next({ dev });
@@ -12,6 +14,14 @@ const handle = app.getRequestHandler();
 const port = Number(process.env.PORT ?? 3000);
 
 await app.prepare();
+
+// 连接 MongoDB
+try {
+  await connectDB();
+  console.log("MongoDB connection initialized");
+} catch (error) {
+  console.warn("MongoDB connection failed, some features may not work:", error);
+}
 
 const expressApp = express();
 

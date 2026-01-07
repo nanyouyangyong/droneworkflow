@@ -12,6 +12,7 @@ node_modules/
 .next/static/
 
 # Environment variables
+.env
 .env.local
 .env.development.local
 .env.test.local

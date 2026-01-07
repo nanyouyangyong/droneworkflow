@@ -70,13 +70,13 @@ export default function EdgeEditor({ edge, onEdgeUpdate, onClose }: EdgeEditorPr
           <h4 className="mb-2 text-sm font-medium text-slate-900">常用条件</h4>
           <div className="space-y-2">
             <button
-              onClick={() => handleConditionChange("battery &gt; 30")}
+              onClick={() => handleConditionChange("battery > 30%")}
               className="w-full text-left rounded border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50"
             >
               电量 &gt; 30%
             </button>
             <button
-              onClick={() => handleConditionChange("battery &gt; 15")}
+              onClick={() => handleConditionChange("battery > 15%")}
               className="w-full text-left rounded border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50"
             >
               电量 &gt; 15%

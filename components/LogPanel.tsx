@@ -91,7 +91,7 @@ export default function LogPanel() {
         <div className="text-xs text-slate-500">{connected ? "WS已连接" : "WS未连接"}</div>
       </div>
 
-      <div className="flex-1 overflow-auto p-3">
+      <div className="app-scrollbar flex-1 overflow-y-auto overflow-x-hidden p-3">
         {missionState == null ? (
           <div className="text-sm text-slate-500">暂无执行任务</div>
         ) : logs.length === 0 ? (

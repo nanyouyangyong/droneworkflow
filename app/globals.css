@@ -14,3 +14,27 @@ body {
 body {
   margin: 0;
 }
+
+ .app-scrollbar {
+   scrollbar-width: thin;
+   scrollbar-color: rgba(100, 116, 139, 0.35) transparent;
+ }
+
+ .app-scrollbar::-webkit-scrollbar {
+   width: 10px;
+ }
+
+ .app-scrollbar::-webkit-scrollbar-track {
+   background: transparent;
+ }
+
+ .app-scrollbar::-webkit-scrollbar-thumb {
+   background-color: rgba(100, 116, 139, 0.25);
+   border-radius: 9999px;
+   border: 3px solid transparent;
+   background-clip: content-box;
+ }
+
+ .app-scrollbar:hover::-webkit-scrollbar-thumb {
+   background-color: rgba(100, 116, 139, 0.4);
+ }

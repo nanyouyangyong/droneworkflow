@@ -110,7 +110,7 @@ export default function ChatPanel() {
       </div>
 
       {/* Messages Area */}
-      <div ref={scrollRef} className="flex-1 overflow-auto">
+      <div ref={scrollRef} className="app-scrollbar flex-1 overflow-y-auto overflow-x-hidden">
         <div className="mx-auto w-full max-w-[820px] px-4 py-6">
           {messages.length === 0 ? (
             <div className="flex min-h-[60vh] items-center justify-center">

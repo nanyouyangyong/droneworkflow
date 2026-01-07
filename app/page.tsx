@@ -16,7 +16,7 @@ export default function Home() {
     <main className="h-screen w-screen overflow-hidden">
       <div className="grid h-full grid-cols-[400px_200px_200px_1fr_400px] gap-0">
         {/* 大模型对话 */}
-        <div className="h-full border-r border-slate-200 bg-white">
+        <div className="h-full min-h-0 overflow-hidden border-r border-slate-200 bg-white">
           <ChatPanel />
         </div>
         {/* 节点库 */}
@@ -32,7 +32,7 @@ export default function Home() {
           <WorkflowCanvas />
         </div>
         {/* 日志面板 */}
-        <div className="h-full bg-white">
+        <div className="h-full min-h-0 overflow-hidden bg-white">
           <LogPanel />
         </div>
       </div>

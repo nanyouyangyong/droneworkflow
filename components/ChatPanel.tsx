@@ -5,65 +5,119 @@ import {
   useState,
   useRef,
   useEffect,
+  useCallback,
   type KeyboardEvent as ReactKeyboardEvent
 } from "react";
 import { useAppStore } from "@/store/useAppStore";
+import { 
+  getSessionId, 
+  resetSessionId, 
+  getChatHistory, 
+  streamParseWorkflow 
+} from "@/lib/client/api";
 
-const models = ["gpt-4", "claude-3.5", "deepseek-coder", "local-llm"] as const;
+const models = ["deepseek-chat", "gpt-4", "claude-3.5", "local-llm"] as const;
 
 export default function ChatPanel() {
   const model = useAppStore((s) => s.model);
   const setModel = useAppStore((s) => s.setModel);
   const messages = useAppStore((s) => s.messages);
   const addMessage = useAppStore((s) => s.addMessage);
+  const updateLastMessage = useAppStore((s) => s.updateLastMessage);
+  const setMessages = useAppStore((s) => s.setMessages);
   const setWorkflow = useAppStore((s) => s.setWorkflow);
 
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [sessionId, setSessionId] = useState("");
+  const [streamingContent, setStreamingContent] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const placeholder = useMemo(
     () => "描述你的无人机任务，如：'巡查A区域并拍照，电量低于30%时返航'",
     []
   );
 
+  // 初始化：获取 sessionId 并加载历史消息
+  useEffect(() => {
+    const initSession = async () => {
+      const sid = getSessionId();
+      setSessionId(sid);
+
+      if (sid) {
+        const res = await getChatHistory(sid);
+        if (res.ok && res.data?.messages?.length) {
+          // 转换为 store 格式
+          const storeMessages = res.data.messages.map((m, idx) => ({
+            id: `${sid}-${idx}`,
+            role: m.role as "user" | "assistant",
+            content: m.content,
+            ts: m.ts
+          }));
+          setMessages(storeMessages);
+        }
+      }
+      setLoading(false);
+    };
+
+    initSession();
+  }, [setMessages]);
+
+  // 开始新会话
+  const onNewSession = useCallback(() => {
+    const newSid = resetSessionId();
+    setSessionId(newSid);
+    setMessages([]);
+  }, [setMessages]);
+
   // Auto scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, busy]);
+  }, [messages, busy, streamingContent]);
 
-  async function onSend() {
+  // 流式发送消息
+  const onSendStream = useCallback(async () => {
     const text = input.trim();
-    if (!text || busy) return;
+    if (!text || busy || !sessionId) return;
 
     setInput("");
     addMessage("user", text);
     setBusy(true);
+    setStreamingContent("");
 
-    try {
-      const res = await fetch("/api/llm/parse", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ userInput: text, model })
-      });
+    // 创建 AbortController 用于取消请求
+    abortControllerRef.current = new AbortController();
 
-      if (!res.ok) {
-        const errText = await res.text();
-        addMessage("assistant", `解析失败: ${errText}`);
-        return;
+    // 添加一个占位的助手消息
+    addMessage("assistant", "");
+
+    await streamParseWorkflow(text, model, sessionId, {
+      signal: abortControllerRef.current.signal,
+      onChunk: (content) => {
+        setStreamingContent(content);
+        updateLastMessage(content);
+      },
+      onComplete: (workflow) => {
+        if (workflow) {
+          setWorkflow(workflow);
+          updateLastMessage("已生成工作流，请在画布确认/调整后执行。");
+        } else {
+          updateLastMessage("工作流解析失败，请重试。");
+        }
+      },
+      onError: (message) => {
+        updateLastMessage(`错误: ${message}`);
       }
+    });
 
-      const data = (await res.json()) as { workflow: unknown };
-      setWorkflow(data.workflow as any);
-      addMessage("assistant", "已生成工作流，请在画布确认/调整后执行。");
-    } catch (e: any) {
-      addMessage("assistant", `请求失败: ${e?.message ?? String(e)}`);
-    } finally {
-      setBusy(false);
-    }
-  }
+    setBusy(false);
+    setStreamingContent("");
+    abortControllerRef.current = null;
+  }, [input, busy, model, sessionId, addMessage, updateLastMessage, setWorkflow]);
+
+  const onSend = onSendStream;
 
   const handleKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -96,23 +150,36 @@ export default function ChatPanel() {
             <div className="text-xs text-slate-500">生成工作流并支持继续追问</div>
           </div>
         </div>
-        <select
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm outline-none focus:ring-2 focus:ring-slate-900/10"
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-        >
-          {models.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onNewSession}
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm hover:bg-slate-50"
+            title="开始新会话"
+          >
+            新会话
+          </button>
+          <select
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm outline-none focus:ring-2 focus:ring-slate-900/10"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+          >
+            {models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Messages Area */}
-      <div ref={scrollRef} className="app-scrollbar flex-1 overflow-y-auto overflow-x-hidden">
+      <div className="app-scrollbar flex-1 overflow-y-auto overflow-x-hidden">
         <div className="mx-auto w-full max-w-[820px] px-4 py-6">
-          {messages.length === 0 ? (
+          {loading ? (
+            <div className="flex min-h-[60vh] items-center justify-center">
+              <div className="text-sm text-slate-500">加载历史对话...</div>
+            </div>
+          ) : messages.length === 0 ? (
             <div className="flex min-h-[60vh] items-center justify-center">
               <div className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                 <div className="text-lg font-semibold text-slate-900">开始描述你的任务</div>

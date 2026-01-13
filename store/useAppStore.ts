@@ -25,7 +25,10 @@ type AppState = {
   setModel: (model: string) => void;
 
   messages: ChatMessage[];
+  setMessages: (messages: ChatMessage[]) => void;
   addMessage: (role: ChatMessage["role"], content: string) => void;
+  updateLastMessage: (content: string) => void;
+  clearMessages: () => void;
 
   history: HistoryItem[];
   upsertHistory: (item: HistoryItem) => void;
@@ -43,14 +46,23 @@ type AppState = {
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
-  model: "gpt-4",
+  model: "deepseek-chat",
   setModel: (model) => set({ model }),
 
   messages: [],
+  setMessages: (messages) => set({ messages }),
   addMessage: (role, content) =>
     set((s) => ({
       messages: [...s.messages, { id: uuidv4(), role, content, ts: Date.now() }]
     })),
+  updateLastMessage: (content) =>
+    set((s) => {
+      if (s.messages.length === 0) return s;
+      const updated = [...s.messages];
+      updated[updated.length - 1] = { ...updated[updated.length - 1], content };
+      return { messages: updated };
+    }),
+  clearMessages: () => set({ messages: [] }),
 
   history: [],
   upsertHistory: (item) =>

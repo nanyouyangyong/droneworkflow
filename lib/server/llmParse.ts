@@ -2,7 +2,8 @@ import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import type { ParsedWorkflow } from "@/lib/types";
-import { getLLM, isLLMConfigured } from "@/lib/server/llm";
+import { getFastLLM, isLLMConfigured } from "@/lib/server/llm";
+import { workflowCache, generateCacheKey } from "@/lib/server/cache";
 
 const parseInputSchema = z.object({
   userInput: z.string().min(1),
@@ -81,7 +82,7 @@ function mockParse(userInput: string): ParsedWorkflow {
 }
 
 async function parseWithLLM(userInput: string): Promise<ParsedWorkflow> {
-  const llm = getLLM();
+  const llm = getFastLLM();
 
   const messages = [
     new SystemMessage(SYSTEM_PROMPT),
@@ -125,27 +126,36 @@ async function parseWithLLM(userInput: string): Promise<ParsedWorkflow> {
 }
 
 export async function parseInstruction(body: unknown): Promise<ParsedWorkflow> {
-  const { userInput } = parseInputSchema.parse(body);
+  const { userInput, model } = parseInputSchema.parse(body);
   
-  // 调试：打印环境变量值（不打印完整 key，只打印前几位和长度）
-  const rawKey = process.env.DEEPSEEK_API_KEY;
-  const keyPreview = rawKey ? `${rawKey.substring(0, 8)}...(${rawKey.length} chars)` : 'undefined';
-  console.log(`[DEBUG] DEEPSEEK_API_KEY: ${keyPreview}`);
-  console.log(`[DEBUG] isLLMConfigured(): ${isLLMConfigured()}`);
+  // 检查缓存
+  const cacheKey = generateCacheKey(userInput, model);
+  const cached = workflowCache.get(cacheKey);
+  if (cached) {
+    console.log("[CACHE HIT] Returning cached workflow");
+    return cached as ParsedWorkflow;
+  }
   
   // 如果配置了 DeepSeek API，使用真正的 LLM 解析
   if (isLLMConfigured()) {
     try {
       console.log("Using DeepSeek LLM to parse instruction...");
-      return await parseWithLLM(userInput);
+      const startTime = Date.now();
+      const result = await parseWithLLM(userInput);
+      console.log(`[PERF] LLM parsing took ${Date.now() - startTime}ms`);
+      
+      // 缓存结果
+      workflowCache.set(cacheKey, result);
+      return result;
     } catch (error) {
       console.error("LLM parsing failed, falling back to mock:", error);
-      // 如果 LLM 解析失败，回退到 mock
       return mockParse(userInput);
     }
   }
 
   // 没有配置 API Key，使用 mock 数据
   console.log("DEEPSEEK_API_KEY not configured, using mock workflow");
-  return mockParse(userInput);
+  const mockResult = mockParse(userInput);
+  workflowCache.set(cacheKey, mockResult);
+  return mockResult;
 }

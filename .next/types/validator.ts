@@ -56,10 +56,64 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../app/api/chat/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/chat">> = Specific
+  const handler = {} as typeof import("../../app/api/chat/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/api/chat/sessions/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/chat/sessions">> = Specific
+  const handler = {} as typeof import("../../app/api/chat/sessions/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../app/api/llm/parse/route.ts
 {
   type __IsExpected<Specific extends RouteHandlerConfig<"/api/llm/parse">> = Specific
   const handler = {} as typeof import("../../app/api/llm/parse/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/api/llm/stream/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/llm/stream">> = Specific
+  const handler = {} as typeof import("../../app/api/llm/stream/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/api/mcp/agent/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/mcp/agent">> = Specific
+  const handler = {} as typeof import("../../app/api/mcp/agent/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/api/mcp/execute/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/mcp/execute">> = Specific
+  const handler = {} as typeof import("../../app/api/mcp/execute/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/api/mcp/tools/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/mcp/tools">> = Specific
+  const handler = {} as typeof import("../../app/api/mcp/tools/route.js")
   type __Check = __IsExpected<typeof handler>
   // @ts-ignore
   type __Unused = __Check

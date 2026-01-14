@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { runAgent } from "@/lib/server/mcp/agent";
+import { runLangGraphAgent, getAvailableTools } from "@/lib/server/mcp/langgraph-agent";
 
 export const runtime = "nodejs";
 
@@ -13,7 +13,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "message is required" }, { status: 400 });
     }
 
-    const result = await runAgent(message, history || []);
+    const result = await runLangGraphAgent(message, history || []);
 
     return NextResponse.json(result);
   } catch (error: any) {

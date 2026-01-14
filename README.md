@@ -16,6 +16,8 @@
 - **后端**: Express, Socket.IO, LangChain, LangGraph
 - **数据库**: MongoDB (Mongoose)
 - **LLM**: DeepSeek API (兼容 OpenAI 接口)
+- **MCP**: Model Context Protocol 服务端/客户端
+- **智能体**: LangGraph ReAct Agent
 
 ## 快速开始
 
@@ -118,6 +120,8 @@ droneworkflow/
 ├── app/                    # Next.js App Router
 │   ├── api/                # API 路由
 │   │   ├── llm/            # LLM 解析接口
+│   │   ├── chat/           # 聊天历史接口
+│   │   ├── mcp/            # MCP Agent 接口
 │   │   ├── workflow/       # 工作流管理接口
 │   │   └── mission/        # 任务执行接口
 │   ├── page.tsx            # 主页面
@@ -129,14 +133,25 @@ droneworkflow/
 │   ├── WorkflowHistory.tsx # 历史记录
 │   └── LogPanel.tsx        # 日志面板
 ├── lib/
+│   ├── client/             # 客户端工具
+│   │   └── api.ts          # API 请求封装
 │   ├── server/             # 服务端逻辑
 │   │   ├── db.ts           # MongoDB 连接
 │   │   ├── llm.ts          # LLM 客户端
 │   │   ├── llmParse.ts     # 指令解析
 │   │   ├── executeGraph.ts # LangGraph 执行
+│   │   ├── mcp/            # MCP 模块
+│   │   │   ├── langgraph-agent.ts  # LangGraph ReAct Agent
+│   │   │   ├── mcp-client.ts       # MCP 客户端
+│   │   │   └── tools.ts            # MCP 工具定义
 │   │   └── models/         # MongoDB 模型
 │   ├── types.ts            # 类型定义
 │   └── socket.ts           # Socket.IO 客户端
+├── mcp-client-typescript/  # MCP 服务端
+│   └── src/
+│       ├── index.ts        # MCP 服务入口
+│       ├── tools.ts        # 无人机控制工具
+│       └── resources.ts    # MCP 资源定义
 ├── store/                  # Zustand 状态管理
 ├── server.ts               # Express + Socket.IO 服务器
 └── package.json

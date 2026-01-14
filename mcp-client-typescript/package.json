@@ -1,0 +1,21 @@
+{
+  "name": "drone-workflow-mcp-server",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP Server for Drone Workflow System",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

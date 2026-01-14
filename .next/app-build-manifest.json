@@ -26,6 +26,16 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/llm/stream/route.js"
+    ],
+    "/api/workflow/list/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/workflow/list/route.js"
+    ],
+    "/api/workflow/[id]/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/workflow/[id]/route.js"
     ]
   }
 }

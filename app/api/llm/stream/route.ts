@@ -1,5 +1,6 @@
 import { connectDB } from "@/lib/server/db";
 import { ChatHistory } from "@/lib/server/models/ChatHistory";
+import { Workflow } from "@/lib/server/models/Workflow";
 import { getLLM, isLLMConfigured } from "@/lib/server/llm";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { v4 as uuidv4 } from "uuid";
@@ -81,6 +82,20 @@ export async function POST(req: Request) {
       // 返回 mock 响应
       const mockWorkflow = createMockWorkflow(userInput);
       
+      // 保存 mock 工作流到数据库
+      let savedWorkflowId = null;
+      try {
+        const savedWorkflow = await Workflow.create({
+          name: mockWorkflow.workflow_name || `工作流_${new Date().toLocaleString("zh-CN")}`,
+          description: userInput.slice(0, 200),
+          nodes: mockWorkflow.nodes || [],
+          edges: mockWorkflow.edges || []
+        });
+        savedWorkflowId = savedWorkflow._id.toString();
+      } catch (dbError) {
+        console.warn("Failed to save mock workflow to DB:", dbError);
+      }
+
       // 保存助手消息到数据库
       try {
         await ChatHistory.findOneAndUpdate(
@@ -92,7 +107,8 @@ export async function POST(req: Request) {
                 content: "已生成工作流（模拟数据），请在画布确认/调整后执行。",
                 ts: Date.now()
               }
-            }
+            },
+            ...(savedWorkflowId ? { $set: { workflowId: savedWorkflowId } } : {})
           }
         );
       } catch (dbError) {
@@ -174,6 +190,22 @@ export async function POST(req: Request) {
             console.error("Failed to parse workflow JSON:", parseError);
           }
           
+          // 保存工作流到数据库
+          let savedWorkflowId = null;
+          if (workflow) {
+            try {
+              const savedWorkflow = await Workflow.create({
+                name: workflow.workflow_name || `工作流_${new Date().toLocaleString("zh-CN")}`,
+                description: userInput.slice(0, 200),
+                nodes: workflow.nodes || [],
+                edges: workflow.edges || []
+              });
+              savedWorkflowId = savedWorkflow._id.toString();
+            } catch (dbError) {
+              console.warn("Failed to save workflow to DB:", dbError);
+            }
+          }
+
           // 保存助手消息到数据库
           try {
             const assistantMessage = workflow 
@@ -189,7 +221,8 @@ export async function POST(req: Request) {
                     content: assistantMessage,
                     ts: Date.now()
                   }
-                }
+                },
+                ...(savedWorkflowId ? { $set: { workflowId: savedWorkflowId } } : {})
               }
             );
           } catch (dbError) {

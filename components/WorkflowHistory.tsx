@@ -1,95 +1,97 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useAppStore } from "@/store/useAppStore";
 
-interface MissionItem {
+interface WorkflowItem {
   id: string;
-  missionId: string;
-  workflowName: string;
-  status: string;
-  progress: number;
+  name: string;
+  description?: string;
   nodeCount: number;
-  logCount: number;
-  startedAt?: string;
-  completedAt?: string;
+  edgeCount: number;
   createdAt: string;
+  updatedAt: string;
 }
 
 export default function WorkflowHistory() {
-  const history = useAppStore((s) => s.history);
   const workflow = useAppStore((s) => s.workflow);
   const setWorkflow = useAppStore((s) => s.setWorkflow);
-  const setActiveMissionId = useAppStore((s) => s.setActiveMissionId);
 
-  const [dbMissions, setDbMissions] = useState<MissionItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [workflows, setWorkflows] = useState<WorkflowItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [initialLoaded, setInitialLoaded] = useState(false);
 
-  // 从后端加载任务历史
-  useEffect(() => {
-    async function fetchMissions() {
-      setLoading(true);
-      try {
-        const res = await fetch("/api/mission/list?limit=50");
-        if (res.ok) {
-          const data = await res.json();
-          setDbMissions(data.missions || []);
-        }
-      } catch (error) {
-        console.error("Failed to fetch missions:", error);
-      } finally {
-        setLoading(false);
+  // 从后端加载工作流列表
+  const fetchWorkflows = useCallback(async () => {
+    try {
+      const res = await fetch("/api/workflow/list?limit=50");
+      if (res.ok) {
+        const data = await res.json();
+        setWorkflows(data.workflows || []);
+        return data.workflows || [];
       }
+    } catch (error) {
+      console.error("Failed to fetch workflows:", error);
     }
-
-    fetchMissions();
-    // 每 10 秒刷新一次
-    const interval = setInterval(fetchMissions, 10000);
-    return () => clearInterval(interval);
+    return [];
   }, []);
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "running":
-        return "bg-blue-100 text-blue-700";
-      case "completed":
-        return "bg-green-100 text-green-700";
-      case "failed":
-        return "bg-red-100 text-red-700";
-      case "idle":
-      default:
-        return "bg-slate-100 text-slate-600";
+  // 加载工作流详情到画布
+  const loadWorkflow = useCallback(async (workflowId: string) => {
+    try {
+      const res = await fetch(`/api/workflow/${workflowId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.workflow) {
+          setWorkflow({
+            workflow_name: data.workflow.name,
+            nodes: data.workflow.nodes || [],
+            edges: data.workflow.edges || []
+          });
+          setSelectedId(workflowId);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load workflow:", error);
     }
-  };
+  }, [setWorkflow]);
 
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case "running":
-        return "执行中";
-      case "completed":
-        return "已完成";
-      case "failed":
-        return "失败";
-      case "idle":
-      default:
-        return "待执行";
+  // 初始化：加载工作流列表，并默认加载第一个
+  useEffect(() => {
+    async function init() {
+      setLoading(true);
+      const list = await fetchWorkflows();
+      
+      // 如果当前没有工作流且列表不为空，加载第一个
+      if (!workflow && list.length > 0 && !initialLoaded) {
+        await loadWorkflow(list[0].id);
+        setInitialLoaded(true);
+      } else {
+        setInitialLoaded(true);
+      }
+      setLoading(false);
     }
-  };
 
-  const formatTime = (ts: number | string) => {
-    const date = new Date(ts);
-    return date.toLocaleTimeString("zh-CN", {
-      hour: "2-digit",
-      minute: "2-digit"
-    });
-  };
+    init();
+  }, [fetchWorkflows, loadWorkflow, workflow, initialLoaded]);
+
+  // 当大模型生成新工作流时，刷新列表
+  useEffect(() => {
+    if (workflow && initialLoaded) {
+      fetchWorkflows();
+    }
+  }, [workflow, initialLoaded, fetchWorkflows]);
 
   const formatDate = (ts: string) => {
     const date = new Date(ts);
     const today = new Date();
     const isToday = date.toDateString() === today.toDateString();
     if (isToday) {
-      return formatTime(ts);
+      return date.toLocaleTimeString("zh-CN", {
+        hour: "2-digit",
+        minute: "2-digit"
+      });
     }
     return date.toLocaleDateString("zh-CN", {
       month: "short",
@@ -99,53 +101,12 @@ export default function WorkflowHistory() {
     });
   };
 
-  // 加载任务详情
-  const handleLoadMission = async (missionId: string) => {
-    try {
-      const res = await fetch(`/api/mission/${missionId}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.mission?.workflowSnapshot) {
-          setWorkflow({
-            workflow_name: data.mission.workflowSnapshot.name,
-            nodes: data.mission.workflowSnapshot.nodes,
-            edges: data.mission.workflowSnapshot.edges
-          });
-          setActiveMissionId(missionId);
-        }
-      }
-    } catch (error) {
-      console.error("Failed to load mission:", error);
-    }
+  // 刷新列表
+  const handleRefresh = async () => {
+    setLoading(true);
+    await fetchWorkflows();
+    setLoading(false);
   };
-
-  // 合并本地历史和数据库任务
-  const allItems = [
-    ...history.map((h) => ({
-      type: "local" as const,
-      id: h.id,
-      missionId: h.missionId,
-      name: h.instruction,
-      status: h.status,
-      nodeCount: h.nodeCount,
-      ts: h.ts
-    })),
-    ...dbMissions.map((m) => ({
-      type: "db" as const,
-      id: m.id,
-      missionId: m.missionId,
-      name: m.workflowName,
-      status: m.status,
-      nodeCount: m.nodeCount,
-      ts: new Date(m.createdAt).getTime()
-    }))
-  ]
-    .filter((item, index, self) => 
-      // 去重：按 missionId 去重
-      index === self.findIndex((t) => t.missionId === item.missionId)
-    )
-    .sort((a, b) => b.ts - a.ts)
-    .slice(0, 30);
 
   return (
     <div className="flex h-full flex-col bg-white">
@@ -155,9 +116,18 @@ export default function WorkflowHistory() {
           <span className="text-lg">📋</span>
           <span className="text-sm font-semibold text-slate-800">工作流记录</span>
         </div>
-        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-          {history.length} 条
-        </span>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={handleRefresh}
+            className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            title="刷新"
+          >
+            <span className={loading ? "animate-spin inline-block" : ""}>🔄</span>
+          </button>
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+            {workflows.length} 条
+          </span>
+        </div>
       </div>
 
       {/* Current Workflow */}
@@ -173,21 +143,21 @@ export default function WorkflowHistory() {
             </span>
           </div>
           <div className="mt-1 text-xs text-blue-600 truncate">
-            {workflow.workflow_name}
+            {workflow.workflow_name || "未命名工作流"}
           </div>
         </div>
       )}
 
-      {/* History List */}
+      {/* Workflow List */}
       <div className="app-scrollbar flex-1 overflow-y-auto overflow-x-hidden">
-        {loading && allItems.length === 0 ? (
+        {loading && workflows.length === 0 ? (
           <div className="flex h-full items-center justify-center p-4">
             <div className="text-center">
               <div className="mb-2 text-2xl animate-spin">⏳</div>
               <div className="text-sm text-slate-400">加载中...</div>
             </div>
           </div>
-        ) : allItems.length === 0 ? (
+        ) : workflows.length === 0 ? (
           <div className="flex h-full items-center justify-center p-4">
             <div className="text-center">
               <div className="mb-2 text-3xl opacity-50">📭</div>
@@ -199,38 +169,39 @@ export default function WorkflowHistory() {
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
-            {allItems.map((item) => (
+            {workflows.map((item) => (
               <div
                 key={item.id}
-                className="p-3 hover:bg-slate-50 cursor-pointer transition-colors"
-                onClick={() => {
-                  if (item.missionId) {
-                    handleLoadMission(item.missionId);
-                  }
-                }}
+                className={`p-3 cursor-pointer transition-colors ${
+                  selectedId === item.id
+                    ? "bg-blue-50 border-l-2 border-l-blue-500"
+                    : "hover:bg-slate-50"
+                }`}
+                onClick={() => loadWorkflow(item.id)}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center space-x-2">
                       <span className="text-xs text-slate-400">
-                        {formatDate(new Date(item.ts).toISOString())}
+                        {formatDate(item.updatedAt)}
                       </span>
-                      <span
-                        className={`rounded px-1.5 py-0.5 text-xs font-medium ${getStatusColor(
-                          item.status
-                        )}`}
-                      >
-                        {getStatusText(item.status)}
-                      </span>
+                      {selectedId === item.id && (
+                        <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-600">
+                          当前
+                        </span>
+                      )}
                     </div>
-                    <div className="mt-1 text-sm text-slate-700 truncate">
+                    <div className="mt-1 text-sm text-slate-700 truncate font-medium">
                       {item.name || "未命名工作流"}
                     </div>
+                    {item.description && (
+                      <div className="mt-0.5 text-xs text-slate-400 truncate">
+                        {item.description}
+                      </div>
+                    )}
                     <div className="mt-1 flex items-center space-x-3 text-xs text-slate-400">
                       <span>📦 {item.nodeCount} 节点</span>
-                      {item.type === "db" && (
-                        <span className="text-blue-400">☁️ 已保存</span>
-                      )}
+                      <span>🔗 {item.edgeCount} 连接</span>
                     </div>
                   </div>
                 </div>
@@ -241,10 +212,10 @@ export default function WorkflowHistory() {
       </div>
 
       {/* Footer */}
-      {allItems.length > 0 && (
+      {workflows.length > 0 && (
         <div className="border-t border-slate-200 p-2">
           <div className="flex items-center justify-between text-xs text-slate-400">
-            <span>共 {allItems.length} 条记录</span>
+            <span>共 {workflows.length} 条记录</span>
             {loading && <span className="animate-pulse">刷新中...</span>}
           </div>
         </div>

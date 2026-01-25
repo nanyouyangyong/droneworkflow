@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef, type MouseEvent } from "react";
 import ReactFlow, {
   Background,
   type Connection,
@@ -86,6 +86,9 @@ export default function WorkflowCanvas() {
     node?: Node;
     edge?: Edge;
   } | null>(null);
+  
+  const [executing, setExecuting] = useState(false);
+  const executeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Dedupe workflow <-> canvas syncing to avoid infinite loops / memory blowups
   const lastSyncedWorkflowStrRef = useRef<string | null>(null);
@@ -364,41 +367,78 @@ export default function WorkflowCanvas() {
     [setEdges, nodes]
   );
 
-  async function onExecute() {
-    if (!workflow) return;
+  const onExecute = useCallback(() => {
+    if (!workflow || executing) return;
+    
+    // 防抖：清除之前的定时器
+    if (executeTimeoutRef.current) {
+      clearTimeout(executeTimeoutRef.current);
+    }
+    
+    setExecuting(true);
+    
+    executeTimeoutRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/workflow/execute", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ workflow })
+        });
 
-    const res = await fetch("/api/workflow/execute", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workflow })
-    });
+        if (!res.ok) {
+          setExecuting(false);
+          return;
+        }
+        const data = (await res.json()) as { missionId: string; state: any };
 
-    if (!res.ok) return;
-    const data = (await res.json()) as { missionId: string; state: any };
+        setActiveMissionId(data.missionId);
+        setMissionState(data.state);
 
-    setActiveMissionId(data.missionId);
-    setMissionState(data.state);
-
-    upsertHistory({
-      id: data.missionId,
-      ts: Date.now(),
-      instruction: workflow.workflow_name,
-      nodeCount: workflow.nodes.length,
-      status: data.state.status,
-      missionId: data.missionId
-    });
-  }
+        upsertHistory({
+          id: data.missionId,
+          ts: Date.now(),
+          instruction: workflow.workflow_name,
+          nodeCount: workflow.nodes.length,
+          status: data.state.status,
+          missionId: data.missionId
+        });
+      } catch (error) {
+        console.error('Execute workflow failed:', error);
+      } finally {
+        setExecuting(false);
+      }
+    }, 300); // 300ms 防抖延迟
+  }, [workflow, executing, setActiveMissionId, setMissionState, upsertHistory]);
+  
+  // 清理防抖定时器
+  useEffect(() => {
+    return () => {
+      if (executeTimeoutRef.current) {
+        clearTimeout(executeTimeoutRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
         <div className="text-sm font-semibold">工作流画布</div>
         <button
-          className="rounded bg-emerald-600 px-3 py-2 text-sm text-white disabled:opacity-50"
+          className="inline-flex items-center justify-center rounded bg-emerald-600 px-3 py-2 text-sm text-white disabled:opacity-50 min-w-[100px]"
           onClick={onExecute}
-          disabled={!workflow}
+          disabled={!workflow || executing}
         >
-          执行工作流
+          {executing ? (
+            <>
+              <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              执行中...
+            </>
+          ) : (
+            "执行工作流"
+          )}
         </button>
       </div>
       <div className="flex-1">

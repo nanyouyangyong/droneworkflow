@@ -119,6 +119,16 @@ export default function ChatPanel() {
 
   const onSend = onSendStream;
 
+  // 中断当前请求
+  const onAbort = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setBusy(false);
+      setStreamingContent("");
+    }
+  }, []);
+
   const handleKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -138,28 +148,28 @@ export default function ChatPanel() {
   };
 
   return (
-    <div className="flex h-full flex-col bg-[#f7f7f8]">
+    <div className="flex h-full flex-col bg-[#f7f7f8] overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-slate-200 bg-white/80 px-4 py-3 backdrop-blur">
-        <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-slate-900 text-white">
+      <div className="flex-shrink-0 flex items-center justify-between border-b border-slate-200 bg-white/80 px-4 py-3 backdrop-blur">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="flex-shrink-0 flex h-8 w-8 items-center justify-center rounded-xl bg-slate-900 text-white">
             AI
           </div>
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-slate-900">大模型对话</div>
-            <div className="text-xs text-slate-500">生成工作流并支持继续追问</div>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-slate-900 truncate">大模型对话</div>
+            <div className="text-xs text-slate-500 truncate">生成工作流并支持继续追问</div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
           <button
             onClick={onNewSession}
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm hover:bg-slate-50"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm hover:bg-slate-50 whitespace-nowrap"
             title="开始新会话"
           >
             新会话
           </button>
           <select
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm outline-none focus:ring-2 focus:ring-slate-900/10"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm outline-none focus:ring-2 focus:ring-slate-900/10 max-w-[120px]"
             value={model}
             onChange={(e) => setModel(e.target.value)}
           >
@@ -173,7 +183,7 @@ export default function ChatPanel() {
       </div>
 
       {/* Messages Area */}
-      <div className="app-scrollbar flex-1 overflow-y-auto overflow-x-hidden">
+      <div className="app-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
         <div className="mx-auto w-full max-w-[820px] px-4 py-6">
           {loading ? (
             <div className="flex min-h-[60vh] items-center justify-center">
@@ -187,10 +197,10 @@ export default function ChatPanel() {
                   我会把你的自然语言指令解析为可编辑的工作流。
                 </div>
                 <div className="mt-4 grid gap-2 text-sm">
-                  <div className="rounded-2xl bg-slate-50 px-4 py-3 text-slate-700">
+                  <div className="rounded-2xl bg-slate-50 px-4 py-3 text-slate-700 break-words">
                     巡查 A 区域并拍照，电量低于 30% 时返航
                   </div>
-                  <div className="rounded-2xl bg-slate-50 px-4 py-3 text-slate-700">
+                  <div className="rounded-2xl bg-slate-50 px-4 py-3 text-slate-700 break-words">
                     起飞到 20 米，飞行到坐标点，悬停 10 秒后录像
                   </div>
                 </div>
@@ -269,7 +279,7 @@ export default function ChatPanel() {
       </div>
 
       {/* Input Area */}
-      <div className="border-t border-slate-200 bg-white/80 backdrop-blur">
+      <div className="flex-shrink-0 border-t border-slate-200 bg-white/80 backdrop-blur">
         <div className="mx-auto w-full max-w-[820px] px-4 py-4">
           <div className="flex items-end gap-3 rounded-3xl border border-slate-200 bg-white px-3 py-3 shadow-sm focus-within:ring-2 focus-within:ring-slate-900/10">
             <textarea
@@ -281,11 +291,22 @@ export default function ChatPanel() {
               rows={2}
             />
             <button
-              className="inline-flex h-10 items-center justify-center rounded-2xl bg-slate-900 px-4 text-sm font-medium text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-40"
-              onClick={onSend}
-              disabled={busy || !input.trim()}
+              className="inline-flex h-10 w-20 flex-shrink-0 items-center justify-center rounded-2xl text-sm font-medium text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-40"
+              style={{ backgroundColor: busy ? '#dc2626' : '#0f172a' }}
+              onClick={busy ? onAbort : onSend}
+              disabled={!busy && !input.trim()}
             >
-              {busy ? "生成中" : "发送"}
+              {busy ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-1.5 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span>停止</span>
+                </>
+              ) : (
+                "发送"
+              )}
             </button>
           </div>
           <div className="mt-2 text-xs text-slate-400">Enter 发送，Shift + Enter 换行</div>

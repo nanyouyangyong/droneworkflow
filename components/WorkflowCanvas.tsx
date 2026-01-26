@@ -124,7 +124,7 @@ export default function WorkflowCanvas() {
   const onConnect = useCallback(
     (connection: Connection) => {
       if (!connection.source || !connection.target) return;
-      setEdges((eds) => [
+      setEdges((eds:any) => [
         ...eds,
         {
           ...connection,

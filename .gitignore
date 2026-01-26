@@ -11,6 +11,8 @@ node_modules/
 .next/server/
 .next/static/
 
+
+/.windsurf/
 # Environment variables
 .env
 .env.local

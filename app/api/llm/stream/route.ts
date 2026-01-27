@@ -16,6 +16,7 @@ const SYSTEM_PROMPT = `你是一个无人机工作流生成助手。用户会用
 - 降落: 无人机降落
 - 悬停: 悬停等待，参数 { duration: number } 表示悬停时间（秒）
 - 飞行到点: 飞行到指定坐标，参数 { lat: number, lng: number, altitude: number }
+- 查询天气: 查询指定城市的天气，参数 { city: string }
 - 区域巡检: 巡检指定区域，参数 { areaName: string }
 - 定时拍照: 定时拍照，参数 { intervalSec: number } 表示拍照间隔（秒）
 - 录像: 开始/停止录像，参数 { action: "start" | "stop" }

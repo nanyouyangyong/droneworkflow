@@ -12,6 +12,7 @@ import {
 import { Mission } from "@/lib/server/models";
 import { connectDB } from "@/lib/server/db";
 import { callMCPTool, initMCPClient } from "@/lib/server/mcp/mcp-client";
+import { mcpManager, callMCPToolMulti } from "@/lib/server/mcp/mcp-manager";
 
 const ExecState = Annotation.Root({
   missionId: Annotation<string>({
@@ -71,21 +72,28 @@ function createInitialDroneState(): DroneState {
 }
 
 // 节点类型到MCP工具的映射
-const NODE_TYPE_TO_MCP_TOOL: Record<string, { tool: string; paramsMapper: (params: Record<string, unknown>, droneState: DroneState) => Record<string, any> }> = {
+// 格式: "server:tool" 或简写 "tool"（默认使用drone服务）
+interface ToolMapping {
+  tool: string;  // 格式: "server:tool" 或 "tool"
+  paramsMapper: (params: Record<string, unknown>, droneState: DroneState) => Record<string, any>;
+}
+
+const NODE_TYPE_TO_MCP_TOOL: Record<string, ToolMapping> = {
+  // 无人机控制工具 (drone 服务)
   "起飞": {
-    tool: "takeoff",
+    tool: "drone:takeoff",
     paramsMapper: (params) => ({ altitude: Number(params.altitude ?? 30) })
   },
   "降落": {
-    tool: "land",
+    tool: "drone:land",
     paramsMapper: () => ({})
   },
   "悬停": {
-    tool: "hover",
+    tool: "drone:hover",
     paramsMapper: (params) => ({ duration: Number(params.duration ?? 5) })
   },
   "飞行到点": {
-    tool: "fly_to",
+    tool: "drone:fly_to",
     paramsMapper: (params, droneState) => ({
       lat: Number(params.lat ?? droneState.position.lat),
       lng: Number(params.lng ?? droneState.position.lng),
@@ -93,22 +101,57 @@ const NODE_TYPE_TO_MCP_TOOL: Record<string, { tool: string; paramsMapper: (param
     })
   },
   "定时拍照": {
-    tool: "take_photo",
+    tool: "drone:take_photo",
     paramsMapper: (params) => ({ count: Number(params.count ?? 1) })
   },
   "录像": {
-    tool: "record_video",
+    tool: "drone:record_video",
     paramsMapper: (params) => ({ action: String(params.action ?? "start") })
   },
   "电量检查": {
-    tool: "check_battery",
+    tool: "drone:check_battery",
     paramsMapper: (params) => ({ threshold: Number(params.threshold ?? params.low ?? 30) })
   },
   "返航": {
-    tool: "return_home",
+    tool: "drone:return_home",
     paramsMapper: () => ({})
+  },
+  
+  // 高德地图工具 (amap 服务)
+  "地址解析": {
+    tool: "amap:maps_geo",
+    paramsMapper: (params) => ({ address: String(params.address ?? "") })
+  },
+  "路径规划": {
+    tool: "amap:maps_direction_driving",
+    paramsMapper: (params) => ({
+      origin: String(params.origin ?? ""),
+      destination: String(params.destination ?? "")
+    })
+  },
+  "POI搜索": {
+    tool: "amap:maps_around",
+    paramsMapper: (params) => ({
+      location: String(params.location ?? ""),
+      keywords: String(params.keywords ?? ""),
+      radius: Number(params.radius ?? 1000)
+    })
+  },
+  "天气查询": {
+    tool: "amap:maps_weather",
+    paramsMapper: (params) => ({ city: String(params.city ?? "") })
   }
 };
+
+// 调用MCP工具（支持多服务）
+async function callTool(toolName: string, args: Record<string, any>): Promise<any> {
+  // 如果工具名包含“:”，使用多服务管理器
+  if (toolName.includes(":")) {
+    return callMCPToolMulti(toolName, args);
+  }
+  // 否则使用默认的drone服务
+  return callMCPTool(toolName, args);
+}
 
 // 通过MCP服务执行单个节点
 async function executeNodeViaMCP(
@@ -124,7 +167,7 @@ async function executeNodeViaMCP(
     case "start": {
       // 开始节点：连接无人机
       try {
-        const result = await callMCPTool("connect_drone", { droneId: `drone-${missionId.slice(0, 8)}` });
+        const result = await callTool("drone:connect_drone", { droneId: `drone-${missionId.slice(0, 8)}` });
         if (result.success && result.droneState) {
           return {
             success: true,
@@ -151,9 +194,9 @@ async function executeNodeViaMCP(
       const areaName = String(params.areaName ?? "未知区域");
       try {
         // 拍照记录巡检
-        await callMCPTool("take_photo", { count: 3 });
+        await callTool("drone:take_photo", { count: 3 });
         // 获取最新状态
-        const statusResult = await callMCPTool("get_drone_status", {});
+        const statusResult = await callTool("drone:get_drone_status", {});
         if (statusResult.droneState) {
           droneState = { ...droneState, ...statusResult.droneState };
         }
@@ -173,7 +216,7 @@ async function executeNodeViaMCP(
   if (toolMapping) {
     try {
       const mcpParams = toolMapping.paramsMapper(params, droneState);
-      const result = await callMCPTool(toolMapping.tool, mcpParams);
+      const result = await callTool(toolMapping.tool, mcpParams);
       
       // 更新无人机状态
       if (result.droneState) {

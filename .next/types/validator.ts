@@ -92,42 +92,6 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
-// Validate ../../app/api/mcp/agent/route.ts
-{
-  type __IsExpected<Specific extends RouteHandlerConfig<"/api/mcp/agent">> = Specific
-  const handler = {} as typeof import("../../app/api/mcp/agent/route.js")
-  type __Check = __IsExpected<typeof handler>
-  // @ts-ignore
-  type __Unused = __Check
-}
-
-// Validate ../../app/api/mcp/execute/route.ts
-{
-  type __IsExpected<Specific extends RouteHandlerConfig<"/api/mcp/execute">> = Specific
-  const handler = {} as typeof import("../../app/api/mcp/execute/route.js")
-  type __Check = __IsExpected<typeof handler>
-  // @ts-ignore
-  type __Unused = __Check
-}
-
-// Validate ../../app/api/mcp/status/route.ts
-{
-  type __IsExpected<Specific extends RouteHandlerConfig<"/api/mcp/status">> = Specific
-  const handler = {} as typeof import("../../app/api/mcp/status/route.js")
-  type __Check = __IsExpected<typeof handler>
-  // @ts-ignore
-  type __Unused = __Check
-}
-
-// Validate ../../app/api/mcp/tools/route.ts
-{
-  type __IsExpected<Specific extends RouteHandlerConfig<"/api/mcp/tools">> = Specific
-  const handler = {} as typeof import("../../app/api/mcp/tools/route.js")
-  type __Check = __IsExpected<typeof handler>
-  // @ts-ignore
-  type __Unused = __Check
-}
-
 // Validate ../../app/api/mission/[id]/route.ts
 {
   type __IsExpected<Specific extends RouteHandlerConfig<"/api/mission/[id]">> = Specific

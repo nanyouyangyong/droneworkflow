@@ -77,27 +77,11 @@ export function getEnabledServers(): MCPServerConfig[] {
   return Object.values(MCP_SERVERS).filter(s => s.enabled);
 }
 
-// 根据名称获取服务配置
-export function getServerConfig(name: string): MCPServerConfig | undefined {
-  return MCP_SERVERS[name];
-}
-
-// 动态添加服务配置
-export function addServerConfig(config: MCPServerConfig): void {
-  MCP_SERVERS[config.name] = config;
-}
-
 // 解析工具名称，获取服务名和原始工具名
 export function parseToolName(fullToolName: string): { serverName: string; toolName: string } {
   const parts = fullToolName.split(":");
   if (parts.length === 2) {
     return { serverName: parts[0], toolName: parts[1] };
   }
-  // 默认使用 drone 服务
   return { serverName: "drone", toolName: fullToolName };
-}
-
-// 构建带前缀的工具名
-export function buildToolName(serverName: string, toolName: string): string {
-  return `${serverName}:${toolName}`;
 }

@@ -12,6 +12,21 @@
       "static/css/app/page.css",
       "static/chunks/app/page.js"
     ],
+    "/login/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/login/page.js"
+    ],
+    "/register/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/register/page.js"
+    ],
+    "/api/auth/register/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/auth/register/route.js"
+    ],
     "/api/chat/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
@@ -26,21 +41,6 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/workflow/[id]/route.js"
-    ],
-    "/api/llm/stream/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/llm/stream/route.js"
-    ],
-    "/api/workflow/execute/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/workflow/execute/route.js"
-    ],
-    "/api/workflow/state/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/workflow/state/route.js"
     ],
     "/_not-found/page": [
       "static/chunks/webpack.js",

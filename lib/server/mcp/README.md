@@ -4,6 +4,21 @@
 
 本项目支持集成多个 MCP (Model Context Protocol) 服务，实现无人机工作流与外部服务（如高德地图）的无缝协作。
 
+## 核心设计原则
+
+基于 MCP 多服务器集成的十大核心设计原则：
+
+1. **统一管理器模式** - 单一 `MCPManager` 管理所有服务器
+2. **配置驱动架构** - 通过 `MCPConfigManager` 动态管理配置
+3. **透明进程管理** - `MCPClient` 自动管理子进程生命周期
+4. **智能工具发现** - `MCPToolRegistry` 统一注册和发现工具
+5. **统一调用接口** - 支持指定服务器和自动检测两种调用模式
+6. **完整错误处理** - 标准化错误分类和内置重试机制
+7. **性能优化集成** - 连接复用和请求优化
+8. **安全隔离设计** - 环境变量隔离敏感配置
+9. **监控可观测性** - 健康检查和性能指标收集
+10. **渐进式扩展** - 模块化设计支持插件式扩展
+
 ## 架构
 
 ```
@@ -15,25 +30,124 @@
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                     MCPManager                               │
-│                   (多服务管理器)                              │
-└────────┬────────────┬────────────┬────────────┬─────────────┘
-         │            │            │            │
-         ▼            ▼            ▼            ▼
-    ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐
-    │  drone  │  │  amap   │  │ weather │  │   ...   │
-    │ (本地)  │  │(高德地图)│  │ (天气)  │  │         │
-    └─────────┘  └─────────┘  └─────────┘  └─────────┘
+│                   (统一管理器)                                │
+├─────────────────────────────────────────────────────────────┤
+│  MCPConfigManager  │  MCPToolRegistry  │  EventSystem       │
+│  (配置管理)         │  (工具注册表)      │  (事件系统)         │
+└────────┬────────────┴────────────┬──────┴───────────────────┘
+         │                         │
+         ▼                         ▼
+┌────────────────┐         ┌────────────────┐
+│   MCPClient    │         │   MCPClient    │
+│   (drone)      │         │   (amap)       │
+├────────────────┤         ├────────────────┤
+│ 重试 │ 监控    │         │ 重试 │ 监控    │
+└────────────────┘         └────────────────┘
+```
+
+## 模块结构
+
+```
+lib/server/mcp/
+├── index.ts          # 统一导出入口
+├── types.ts          # 类型定义
+├── mcp-config.ts     # 配置管理器
+├── mcp-manager.ts    # 统一管理器
+├── client.ts         # 单客户端封装
+├── tool-registry.ts  # 工具注册表
+├── error-handler.ts  # 错误处理
+└── README.md         # 文档
+```
+
+## 快速开始
+
+### 基本使用
+
+```typescript
+import { mcpManager, callMCPTool } from "@/lib/server/mcp";
+
+// 初始化（自动连接所有启用的服务器）
+await mcpManager.initialize();
+
+// 调用工具（指定服务器）
+const result = await mcpManager.callTool("drone:takeoff", { altitude: 10 });
+
+// 调用工具（自动检测服务器）
+const geoResult = await mcpManager.callToolAuto("maps_geo", { address: "北京" });
+
+// 获取所有可用工具
+const tools = mcpManager.getTools();
+
+// 获取服务器状态
+const status = mcpManager.getStatus();
+```
+
+### 动态管理服务器
+
+```typescript
+import { mcpManager, mcpConfigManager } from "@/lib/server/mcp";
+
+// 动态添加新服务器
+await mcpManager.addServer({
+  name: "myservice",
+  description: "我的自定义服务",
+  enabled: true,
+  transport: "stdio",
+  command: "npx",
+  args: ["-y", "@myorg/mcp-server"],
+});
+
+// 启用/禁用服务器
+await mcpManager.setServerEnabled("weather", true);
+
+// 移除服务器
+await mcpManager.removeServer("myservice");
+```
+
+### 事件监听
+
+```typescript
+import { mcpManager } from "@/lib/server/mcp";
+
+// 监听事件
+const unsubscribe = mcpManager.onEvent((event) => {
+  console.log(`[${event.type}] ${event.serverName}:`, event.data);
+});
+
+// 取消监听
+unsubscribe();
 ```
 
 ## 配置外部 MCP 服务
 
 ### 1. 添加服务配置
 
-编辑 `mcp-config.ts`：
+使用配置管理器动态添加，或编辑 `mcp-config.ts`：
 
 ```typescript
+// 方式1: 动态添加
+mcpConfigManager.addServer({
+  name: "amap",
+  description: "高德地图 MCP 服务",
+  enabled: true,
+  transport: "stdio",
+  command: "npx",
+  args: ["-y", "@amap/amap-maps-mcp-server"],
+  env: {
+    AMAP_MAPS_API_KEY: process.env.AMAP_API_KEY || ""
+  },
+  toolPrefix: "amap",
+  retryConfig: {
+    maxRetries: 3,
+    baseDelayMs: 1000,
+    maxDelayMs: 10000,
+    backoffMultiplier: 2,
+  },
+  timeout: 30000,
+});
+
+// 方式2: 预定义配置 (mcp-config.ts)
 export const MCP_SERVERS: Record<string, MCPServerConfig> = {
-  // 高德地图 MCP 服务
   amap: {
     name: "amap",
     description: "高德地图 MCP 服务",
@@ -45,20 +159,6 @@ export const MCP_SERVERS: Record<string, MCPServerConfig> = {
       AMAP_MAPS_API_KEY: process.env.AMAP_API_KEY || ""
     },
     toolPrefix: "amap"
-  },
-  
-  // 添加新服务示例
-  myservice: {
-    name: "myservice",
-    description: "自定义服务描述",
-    enabled: true,
-    transport: "stdio",
-    command: "npx",
-    args: ["-y", "@yourorg/mcp-server"],
-    env: {
-      API_KEY: process.env.MY_SERVICE_API_KEY || ""
-    },
-    toolPrefix: "myservice"
   }
 };
 ```

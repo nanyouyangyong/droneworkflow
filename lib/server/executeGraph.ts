@@ -11,8 +11,7 @@ import {
 } from "@/lib/server/missionStore";
 import { Mission } from "@/lib/server/models";
 import { connectDB } from "@/lib/server/db";
-import { callMCPTool, initMCPClient } from "@/lib/server/mcp/mcp-client";
-import { mcpManager, callMCPToolMulti } from "@/lib/server/mcp/mcp-manager";
+import { callMCPTool, mcpManager, callMCPToolMulti } from "@/lib/server/mcp";
 
 const ExecState = Annotation.Root({
   missionId: Annotation<string>({

@@ -5,6 +5,7 @@ node_modules/
 # next.js
 /.next/
 /out/
+.claude
 
 # Specific .next subdirectories to ignore
 .next/cache/

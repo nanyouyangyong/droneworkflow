@@ -1,6 +1,9 @@
-import { z } from "zod";
+import * as client from "./httpDroneClient.js";
 
+// ============================================================================
 // 工具定义接口
+// ============================================================================
+
 export interface DroneTool {
   name: string;
   description: string;
@@ -12,20 +15,34 @@ export interface DroneTool {
   execute: (params: any) => Promise<any>;
 }
 
-// 模拟无人机状态
-let droneState = {
-  connected: false,
-  battery: 100,
-  altitude: 0,
-  position: { lat: 39.9042, lng: 116.4074 },
-  status: "idle" as "idle" | "flying" | "hovering" | "returning",
-  isRecording: false,
-};
+// ============================================================================
+// activeDroneId —— 当前激活的无人机 ID（方案 A）
+// connect_drone 成功后自动设置，后续工具默认对此 ID 操作
+// ============================================================================
 
-// 工具：连接无人机
+let activeDroneId: string | null = null;
+
+function requireActiveDrone(): string {
+  if (!activeDroneId) {
+    throw new Error("没有激活的无人机，请先调用 connect_drone");
+  }
+  return activeDroneId;
+}
+
+function unwrap(res: any): any {
+  if (!res.success) {
+    throw new Error(res.error?.message || "drone-control-service 返回错误");
+  }
+  return res.data;
+}
+
+// ============================================================================
+// 工具定义（全部通过 httpDroneClient 调用 drone-control-service）
+// ============================================================================
+
 const connectDroneTool: DroneTool = {
   name: "connect_drone",
-  description: "连接到无人机设备",
+  description: "连接到无人机设备（连接后自动设为当前激活无人机）",
   inputSchema: {
     type: "object",
     properties: {
@@ -33,20 +50,37 @@ const connectDroneTool: DroneTool = {
         type: "string",
         description: "无人机设备ID",
       },
+      name: {
+        type: "string",
+        description: "无人机名称（可选）",
+      },
     },
     required: ["droneId"],
   },
   execute: async (params) => {
-    droneState.connected = true;
-    return {
-      success: true,
-      message: `已连接到无人机 ${params.droneId}`,
-      droneState: { ...droneState },
-    };
+    const res = await client.connectDrone(params.droneId, params.name);
+    const data = unwrap(res);
+    activeDroneId = params.droneId;
+    return { ...data, activeDroneId };
   },
 };
 
-// 工具：起飞
+const disconnectDroneTool: DroneTool = {
+  name: "disconnect_drone",
+  description: "断开当前无人机连接",
+  inputSchema: {
+    type: "object",
+    properties: {},
+  },
+  execute: async () => {
+    const droneId = requireActiveDrone();
+    const res = await client.disconnectDrone(droneId);
+    const data = unwrap(res);
+    activeDroneId = null;
+    return data;
+  },
+};
+
 const takeoffTool: DroneTool = {
   name: "takeoff",
   description: "控制无人机起飞到指定高度",
@@ -63,21 +97,12 @@ const takeoffTool: DroneTool = {
     required: ["altitude"],
   },
   execute: async (params) => {
-    if (!droneState.connected) {
-      return { success: false, error: "无人机未连接" };
-    }
-    droneState.altitude = params.altitude;
-    droneState.status = "flying";
-    droneState.battery -= 2;
-    return {
-      success: true,
-      message: `无人机已起飞至 ${params.altitude} 米`,
-      droneState: { ...droneState },
-    };
+    const droneId = requireActiveDrone();
+    const res = await client.sendCommand(droneId, "takeoff", { altitude: params.altitude });
+    return unwrap(res);
   },
 };
 
-// 工具：降落
 const landTool: DroneTool = {
   name: "land",
   description: "控制无人机降落",
@@ -86,21 +111,12 @@ const landTool: DroneTool = {
     properties: {},
   },
   execute: async () => {
-    if (!droneState.connected) {
-      return { success: false, error: "无人机未连接" };
-    }
-    droneState.altitude = 0;
-    droneState.status = "idle";
-    droneState.battery -= 1;
-    return {
-      success: true,
-      message: "无人机已安全降落",
-      droneState: { ...droneState },
-    };
+    const droneId = requireActiveDrone();
+    const res = await client.sendCommand(droneId, "land", {});
+    return unwrap(res);
   },
 };
 
-// 工具：飞行到指定位置
 const flyToTool: DroneTool = {
   name: "fly_to",
   description: "控制无人机飞行到指定GPS坐标",
@@ -123,24 +139,16 @@ const flyToTool: DroneTool = {
     required: ["lat", "lng"],
   },
   execute: async (params) => {
-    if (!droneState.connected) {
-      return { success: false, error: "无人机未连接" };
-    }
-    droneState.position = { lat: params.lat, lng: params.lng };
-    if (params.altitude) {
-      droneState.altitude = params.altitude;
-    }
-    droneState.status = "flying";
-    droneState.battery -= 5;
-    return {
-      success: true,
-      message: `无人机已飞行至 (${params.lat}, ${params.lng})`,
-      droneState: { ...droneState },
-    };
+    const droneId = requireActiveDrone();
+    const res = await client.sendCommand(droneId, "fly_to", {
+      lat: params.lat,
+      lng: params.lng,
+      altitude: params.altitude,
+    });
+    return unwrap(res);
   },
 };
 
-// 工具：悬停
 const hoverTool: DroneTool = {
   name: "hover",
   description: "控制无人机在当前位置悬停指定时间",
@@ -155,20 +163,12 @@ const hoverTool: DroneTool = {
     required: ["duration"],
   },
   execute: async (params) => {
-    if (!droneState.connected) {
-      return { success: false, error: "无人机未连接" };
-    }
-    droneState.status = "hovering";
-    droneState.battery -= Math.ceil(params.duration / 10);
-    return {
-      success: true,
-      message: `无人机悬停 ${params.duration} 秒`,
-      droneState: { ...droneState },
-    };
+    const droneId = requireActiveDrone();
+    const res = await client.sendCommand(droneId, "hover", { duration: params.duration });
+    return unwrap(res);
   },
 };
 
-// 工具：拍照
 const takePhotoTool: DroneTool = {
   name: "take_photo",
   description: "控制无人机拍摄照片",
@@ -183,24 +183,12 @@ const takePhotoTool: DroneTool = {
     },
   },
   execute: async (params) => {
-    if (!droneState.connected) {
-      return { success: false, error: "无人机未连接" };
-    }
-    const count = params.count || 1;
-    return {
-      success: true,
-      message: `已拍摄 ${count} 张照片`,
-      photos: Array.from({ length: count }, (_, i) => ({
-        id: `photo_${Date.now()}_${i}`,
-        timestamp: new Date().toISOString(),
-        position: { ...droneState.position },
-        altitude: droneState.altitude,
-      })),
-    };
+    const droneId = requireActiveDrone();
+    const res = await client.sendCommand(droneId, "take_photo", { count: params.count || 1 });
+    return unwrap(res);
   },
 };
 
-// 工具：开始/停止录像
 const recordVideoTool: DroneTool = {
   name: "record_video",
   description: "控制无人机开始或停止录像",
@@ -216,19 +204,12 @@ const recordVideoTool: DroneTool = {
     required: ["action"],
   },
   execute: async (params) => {
-    if (!droneState.connected) {
-      return { success: false, error: "无人机未连接" };
-    }
-    droneState.isRecording = params.action === "start";
-    return {
-      success: true,
-      message: params.action === "start" ? "开始录像" : "停止录像",
-      isRecording: droneState.isRecording,
-    };
+    const droneId = requireActiveDrone();
+    const res = await client.sendCommand(droneId, "record_video", { action: params.action });
+    return unwrap(res);
   },
 };
 
-// 工具：获取无人机状态
 const getDroneStatusTool: DroneTool = {
   name: "get_drone_status",
   description: "获取无人机当前状态信息",
@@ -237,14 +218,12 @@ const getDroneStatusTool: DroneTool = {
     properties: {},
   },
   execute: async () => {
-    return {
-      success: true,
-      droneState: { ...droneState },
-    };
+    const droneId = requireActiveDrone();
+    const res = await client.getDroneStatus(droneId);
+    return unwrap(res);
   },
 };
 
-// 工具：返航
 const returnHomeTool: DroneTool = {
   name: "return_home",
   description: "控制无人机返回起飞点",
@@ -253,21 +232,12 @@ const returnHomeTool: DroneTool = {
     properties: {},
   },
   execute: async () => {
-    if (!droneState.connected) {
-      return { success: false, error: "无人机未连接" };
-    }
-    droneState.status = "returning";
-    droneState.position = { lat: 39.9042, lng: 116.4074 };
-    droneState.battery -= 3;
-    return {
-      success: true,
-      message: "无人机正在返航",
-      droneState: { ...droneState },
-    };
+    const droneId = requireActiveDrone();
+    const res = await client.sendCommand(droneId, "return_home", {});
+    return unwrap(res);
   },
 };
 
-// 工具：检查电量
 const checkBatteryTool: DroneTool = {
   name: "check_battery",
   description: "检查无人机电量状态",
@@ -282,21 +252,19 @@ const checkBatteryTool: DroneTool = {
     },
   },
   execute: async (params) => {
-    const threshold = params.threshold || 30;
-    const isLow = droneState.battery < threshold;
-    return {
-      success: true,
-      battery: droneState.battery,
-      threshold,
-      isLow,
-      warning: isLow ? `电量低于 ${threshold}%，建议返航` : null,
-    };
+    const droneId = requireActiveDrone();
+    const res = await client.sendCommand(droneId, "check_battery", { threshold: params.threshold || 30 });
+    return unwrap(res);
   },
 };
 
-// 导出所有工具
+// ============================================================================
+// 导出
+// ============================================================================
+
 export const droneTools: DroneTool[] = [
   connectDroneTool,
+  disconnectDroneTool,
   takeoffTool,
   landTool,
   flyToTool,
@@ -308,7 +276,6 @@ export const droneTools: DroneTool[] = [
   checkBatteryTool,
 ];
 
-// 根据名称执行工具
 export async function executeToolByName(
   name: string,
   params: any

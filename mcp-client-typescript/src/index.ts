@@ -6,7 +6,7 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { droneTools, executeToolByName, type DroneTool } from "./tools.ts";
+import { droneTools, executeToolByName, type DroneTool } from "./tools.js";
 import { droneResources, getResourceContent, type DroneResource } from "./resources.js";
 
 // 创建 MCP 服务器

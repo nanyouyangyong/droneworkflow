@@ -90,7 +90,7 @@ export default function NodeEditor({ node, onNodeUpdate, onClose }: NodeEditorPr
               <label className="block text-sm font-medium text-slate-700">高度 (米)</label>
               <input
                 type="number"
-                value={editedNode.params?.altitude || 50}
+                value={(editedNode.params?.altitude as number) || 50}
                 onChange={(e) => handleParamChange("altitude", Number(e.target.value))}
                 className="mt-1 block w-full rounded border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />

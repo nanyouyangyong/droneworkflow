@@ -38,3 +38,28 @@ body {
  .app-scrollbar:hover::-webkit-scrollbar-thumb {
    background-color: rgba(100, 116, 139, 0.4);
  }
+
+ /* 横向滚动条 */
+ .app-scrollbar::-webkit-scrollbar:horizontal {
+   height: 4px;
+ }
+
+ /* 画布节点执行中动画 */
+ @keyframes wf-node-pulse {
+   0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
+   50% { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
+ }
+
+ .wf-node-executing {
+   animation: wf-node-pulse 1.5s ease-in-out infinite;
+ }
+
+ /* 节点执行进度条动画 */
+ @keyframes wf-progress-fill {
+   0% { width: 0%; }
+   100% { width: 100%; }
+ }
+
+ .wf-progress-bar {
+   animation: wf-progress-fill 0.7s ease-out forwards;
+ }

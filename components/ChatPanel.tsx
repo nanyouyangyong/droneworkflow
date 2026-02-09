@@ -148,28 +148,27 @@ export default function ChatPanel() {
   };
 
   return (
-    <div className="flex h-full flex-col bg-[#f7f7f8] overflow-hidden">
+    <div className="flex h-full flex-col overflow-hidden bg-[#f8f9fb]">
       {/* Header */}
-      <div className="flex-shrink-0 flex items-center justify-between border-b border-slate-200 bg-white/80 px-4 py-3 backdrop-blur">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="flex-shrink-0 flex h-8 w-8 items-center justify-center rounded-xl bg-slate-900 text-white">
+      <div className="shrink-0 flex items-center justify-between border-b border-slate-200/80 bg-white px-4 py-2.5">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="shrink-0 flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-slate-800 to-slate-600 text-[11px] font-bold text-white">
             AI
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-slate-900 truncate">大模型对话</div>
-            <div className="text-xs text-slate-500 truncate">生成工作流并支持继续追问</div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-slate-800">智能对话</div>
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
             onClick={onNewSession}
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm hover:bg-slate-50 whitespace-nowrap"
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 shadow-sm transition-all hover:bg-slate-50 hover:shadow whitespace-nowrap"
             title="开始新会话"
           >
-            新会话
+            + 新会话
           </button>
           <select
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm outline-none focus:ring-2 focus:ring-slate-900/10 max-w-[120px]"
+            className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 shadow-sm outline-none focus:ring-2 focus:ring-blue-500/20 max-w-[110px]"
             value={model}
             onChange={(e) => setModel(e.target.value)}
           >
@@ -184,53 +183,44 @@ export default function ChatPanel() {
 
       {/* Messages Area */}
       <div className="app-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-        <div className="mx-auto w-full max-w-[820px] px-4 py-6">
+        <div className="w-full px-3 py-4">
           {loading ? (
-            <div className="flex min-h-[60vh] items-center justify-center">
-              <div className="text-sm text-slate-500">加载历史对话...</div>
+            <div className="flex h-full items-center justify-center py-20">
+              <div className="text-sm text-slate-400">加载历史对话...</div>
             </div>
           ) : messages.length === 0 ? (
-            <div className="flex min-h-[60vh] items-center justify-center">
-              <div className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="text-lg font-semibold text-slate-900">开始描述你的任务</div>
-                <div className="mt-1 text-sm text-slate-600">
-                  我会把你的自然语言指令解析为可编辑的工作流。
+            <div className="flex h-full items-center justify-center py-10">
+              <div className="w-full rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+                <div className="text-base font-semibold text-slate-800">描述你的任务</div>
+                <div className="mt-1 text-xs text-slate-500">
+                  自然语言指令 → 可编辑工作流
                 </div>
-                <div className="mt-4 grid gap-2 text-sm">
-                  <div className="rounded-2xl bg-slate-50 px-4 py-3 text-slate-700 break-words">
+                <div className="mt-3 grid gap-1.5 text-xs">
+                  <div className="cursor-pointer rounded-xl bg-slate-50 px-3 py-2.5 text-slate-600 transition-colors hover:bg-slate-100">
                     巡查 A 区域并拍照，电量低于 30% 时返航
                   </div>
-                  <div className="rounded-2xl bg-slate-50 px-4 py-3 text-slate-700 break-words">
-                    起飞到 20 米，飞行到坐标点，悬停 10 秒后录像
+                  <div className="cursor-pointer rounded-xl bg-slate-50 px-3 py-2.5 text-slate-600 transition-colors hover:bg-slate-100">
+                    3架无人机同时巡检ABC三个区域
                   </div>
                 </div>
               </div>
             </div>
           ) : (
-            <div className="space-y-5">
+            <div className="space-y-3">
               {messages.map((m) => {
                 const isUser = m.role === "user";
 
                 if (isUser) {
                   return (
-                    <div key={m.id} className="w-full">
-                      <div className="flex justify-end">
-                        <div className="w-full max-w-[820px]">
-                          <div className="mb-2 flex justify-end">
-                            <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-blue-600 text-xs font-semibold text-white shadow-sm">
-                              U
-                            </div>
+                    <div key={m.id} className="flex justify-end">
+                      <div className="max-w-[88%]">
+                        <div className="rounded-2xl rounded-tr-md bg-gradient-to-r from-blue-600 to-blue-500 px-3.5 py-2.5 text-white shadow-sm">
+                          <div className="whitespace-pre-wrap break-words text-[13px] leading-5">
+                            {m.content}
                           </div>
-                          <div className="flex justify-end">
-                            <div className="max-w-[92%] rounded-2xl bg-gradient-to-r from-slate-900 to-slate-800 px-4 py-3 text-white shadow-sm ring-1 ring-slate-900">
-                              <div className="whitespace-pre-wrap break-words text-[14px] leading-6">
-                                {m.content}
-                              </div>
-                            </div>
-                          </div>
-                          <div className="mt-1 text-right text-xs text-slate-400">
-                            {formatTime(m.ts)}
-                          </div>
+                        </div>
+                        <div className="mt-0.5 text-right text-[10px] text-slate-400">
+                          {formatTime(m.ts)}
                         </div>
                       </div>
                     </div>
@@ -238,34 +228,34 @@ export default function ChatPanel() {
                 }
 
                 return (
-                  <div key={m.id} className="flex justify-start">
-                    <div className="mr-3 mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-900 to-slate-600 text-xs font-semibold text-white">
+                  <div key={m.id} className="flex justify-start gap-2">
+                    <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-slate-700 to-slate-500 text-[9px] font-bold text-white">
                       AI
                     </div>
-                    <div className="max-w-[82%] min-w-0">
-                      <div className="rounded-3xl bg-white px-4 py-3 text-slate-800 shadow-sm ring-1 ring-slate-200">
-                        <div className="whitespace-pre-wrap break-words text-[14px] leading-6">
+                    <div className="max-w-[85%] min-w-0">
+                      <div className="rounded-2xl rounded-tl-md bg-white px-3.5 py-2.5 text-slate-700 shadow-sm ring-1 ring-slate-200/80">
+                        <div className="whitespace-pre-wrap break-words text-[13px] leading-5">
                           {m.content}
                         </div>
                       </div>
-                      <div className="mt-1 text-left text-xs text-slate-400">{formatTime(m.ts)}</div>
+                      <div className="mt-0.5 text-[10px] text-slate-400">{formatTime(m.ts)}</div>
                     </div>
                   </div>
                 );
               })}
 
               {busy && (
-                <div className="flex justify-start">
-                  <div className="mr-3 mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-900 to-slate-600 text-xs font-semibold text-white">
+                <div className="flex justify-start gap-2">
+                  <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-slate-700 to-slate-500 text-[9px] font-bold text-white">
                     AI
                   </div>
-                  <div className="max-w-[82%]">
-                    <div className="rounded-3xl bg-white px-4 py-3 shadow-sm ring-1 ring-slate-200">
-                      <div className="flex items-center gap-2 text-sm text-slate-500">
-                        <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-slate-400" />
-                        <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-slate-400 [animation-delay:150ms]" />
-                        <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-slate-400 [animation-delay:300ms]" />
-                        <span className="ml-2">正在生成工作流…</span>
+                  <div>
+                    <div className="rounded-2xl rounded-tl-md bg-white px-3.5 py-2.5 shadow-sm ring-1 ring-slate-200/80">
+                      <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                        <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
+                        <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400 [animation-delay:150ms]" />
+                        <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400 [animation-delay:300ms]" />
+                        <span className="ml-1">生成中…</span>
                       </div>
                     </div>
                   </div>
@@ -278,39 +268,37 @@ export default function ChatPanel() {
         </div>
       </div>
 
-      {/* Input Area */}
-      <div className="flex-shrink-0 border-t border-slate-200 bg-white/80 backdrop-blur">
-        <div className="mx-auto w-full max-w-[820px] px-4 py-4">
-          <div className="flex items-end gap-3 rounded-3xl border border-slate-200 bg-white px-3 py-3 shadow-sm focus-within:ring-2 focus-within:ring-slate-900/10">
-            <textarea
-              className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1 text-sm leading-6 text-slate-800 outline-none placeholder:text-slate-400"
-              placeholder={placeholder}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              rows={2}
-            />
-            <button
-              className="inline-flex h-10 w-20 flex-shrink-0 items-center justify-center rounded-2xl text-sm font-medium text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-40"
-              style={{ backgroundColor: busy ? '#dc2626' : '#0f172a' }}
-              onClick={busy ? onAbort : onSend}
-              disabled={!busy && !input.trim()}
-            >
-              {busy ? (
-                <>
-                  <svg className="animate-spin -ml-1 mr-1.5 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  <span>停止</span>
-                </>
-              ) : (
-                "发送"
-              )}
-            </button>
-          </div>
-          <div className="mt-2 text-xs text-slate-400">Enter 发送，Shift + Enter 换行</div>
+      {/* Input Area — shrink-0 确保始终可见 */}
+      <div className="shrink-0 border-t border-slate-200/80 bg-white p-3">
+        <div className="flex items-end gap-2 rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2 focus-within:border-blue-300 focus-within:ring-2 focus-within:ring-blue-500/10 transition-all">
+          <textarea
+            className="max-h-24 flex-1 resize-none bg-transparent text-[13px] leading-5 text-slate-700 outline-none placeholder:text-slate-400"
+            placeholder={placeholder}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            rows={2}
+          />
+          <button
+            className="inline-flex h-8 w-16 shrink-0 items-center justify-center rounded-lg text-xs font-medium text-white shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-40"
+            style={{ backgroundColor: busy ? '#dc2626' : '#3b82f6' }}
+            onClick={busy ? onAbort : onSend}
+            disabled={!busy && !input.trim()}
+          >
+            {busy ? (
+              <>
+                <svg className="animate-spin -ml-0.5 mr-1 h-3 w-3 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                停止
+              </>
+            ) : (
+              "发送"
+            )}
+          </button>
         </div>
+        <div className="mt-1.5 text-center text-[10px] text-slate-400">Enter 发送 · Shift+Enter 换行</div>
       </div>
     </div>
   );

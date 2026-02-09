@@ -48,6 +48,15 @@ type AppState = {
   subMissionLogs: Record<string, LogEvent[]>;
   appendSubMissionLog: (droneId: string, log: LogEvent) => void;
   clearSubMissionLogs: () => void;
+
+  // 画布节点执行状态
+  executedNodes: Set<string>;
+  failedNodes: Set<string>;
+  currentNode: string | null;
+  markNodeExecuted: (nodeId: string) => void;
+  markNodeFailed: (nodeId: string) => void;
+  setCurrentNode: (nodeId: string | null) => void;
+  resetExecutionState: () => void;
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -105,4 +114,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       },
     })),
   clearSubMissionLogs: () => set({ subMissionLogs: {} }),
+
+  executedNodes: new Set<string>(),
+  failedNodes: new Set<string>(),
+  currentNode: null,
+  markNodeExecuted: (nodeId) =>
+    set((s) => {
+      const next = new Set(s.executedNodes);
+      next.add(nodeId);
+      return { executedNodes: next };
+    }),
+  markNodeFailed: (nodeId) =>
+    set((s) => {
+      const next = new Set(s.failedNodes);
+      next.add(nodeId);
+      return { failedNodes: next };
+    }),
+  setCurrentNode: (nodeId) => set({ currentNode: nodeId }),
+  resetExecutionState: () =>
+    set({ executedNodes: new Set<string>(), failedNodes: new Set<string>(), currentNode: null }),
 }));

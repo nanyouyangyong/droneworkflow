@@ -18,8 +18,10 @@ import type { ParsedWorkflow, WorkflowNode, WorkflowEdge } from "@/lib/types";
 import NodeEditor from "@/components/NodeEditor";
 import EdgeEditor from "@/components/EdgeEditor";
 import ContextMenu from "@/components/ContextMenu";
+import WorkflowNodeComponent from "@/components/WorkflowNode";
+import NodeLibrary from "@/components/NodeLibrary";
 
-const NODE_TYPES = {} as const;
+const NODE_TYPES = { custom: WorkflowNodeComponent } as const;
 const EDGE_TYPES = {} as const;
 
 function wfToReactFlow(wf: ParsedWorkflow): { nodes: Node[]; edges: Edge[] } {
@@ -150,7 +152,7 @@ function wfToReactFlow(wf: ParsedWorkflow): { nodes: Node[]; edges: Edge[] } {
       params: n.params,
     },
     position: positions.get(n.id) || { x: 0, y: 0 },
-    type: "default",
+    type: "custom",
   }));
 
   const edges: Edge[] = wf.edges.map((e) => ({
@@ -159,6 +161,8 @@ function wfToReactFlow(wf: ParsedWorkflow): { nodes: Node[]; edges: Edge[] } {
     target: e.to,
     label: e.condition ?? undefined,
     animated: false,
+    style: { stroke: '#94a3b8', strokeWidth: 1.5 },
+    labelStyle: { fontSize: 10, fill: '#64748b' },
   }));
 
   return { nodes, edges };
@@ -192,6 +196,8 @@ export default function WorkflowCanvas() {
   const setActiveMissionId = useAppStore((s) => s.setActiveMissionId);
   const setMissionState = useAppStore((s) => s.setMissionState);
   const upsertHistory = useAppStore((s) => s.upsertHistory);
+  const resetExecutionState = useAppStore((s) => s.resetExecutionState);
+  const missionState = useAppStore((s) => s.missionState);
   
   const [selectedNode, setSelectedNode] = useState<WorkflowNode | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -208,6 +214,8 @@ export default function WorkflowCanvas() {
   
   const [executing, setExecuting] = useState(false);
   const executeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [showNodeLibrary, setShowNodeLibrary] = useState(false);
+  const simulationRef = useRef<NodeJS.Timeout[]>([]);
 
   // Dedupe workflow <-> canvas syncing to avoid infinite loops / memory blowups
   const lastSyncedWorkflowStrRef = useRef<string | null>(null);
@@ -431,7 +439,7 @@ export default function WorkflowCanvas() {
 
       const newNode: Node = {
         id: `${type}-${Date.now()}`,
-        type: 'default',
+        type: 'custom',
         position,
         data: {
           label: type,
@@ -486,15 +494,85 @@ export default function WorkflowCanvas() {
     [setEdges, nodes]
   );
 
+  // 获取拓扑排序的节点 ID 列表
+  const getTopoOrder = useCallback((wf: ParsedWorkflow): string[] => {
+    const childrenOf = new Map<string, string[]>();
+    const inDegree = new Map<string, number>();
+    for (const n of wf.nodes) inDegree.set(n.id, 0);
+    for (const e of wf.edges) {
+      childrenOf.set(e.from, [...(childrenOf.get(e.from) || []), e.to]);
+      inDegree.set(e.to, (inDegree.get(e.to) || 0) + 1);
+    }
+    const queue = wf.nodes.filter(n => (inDegree.get(n.id) || 0) === 0).map(n => n.id);
+    const order: string[] = [];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      order.push(id);
+      for (const child of (childrenOf.get(id) || [])) {
+        const deg = (inDegree.get(child) || 1) - 1;
+        inDegree.set(child, deg);
+        if (deg === 0) queue.push(child);
+      }
+    }
+    // 添加未被遍历到的孤立节点
+    for (const n of wf.nodes) {
+      if (!order.includes(n.id)) order.push(n.id);
+    }
+    return order;
+  }, []);
+
+  // 客户端模拟执行动画
+  const simulateExecution = useCallback((wf: ParsedWorkflow) => {
+    // 清理之前的模拟
+    simulationRef.current.forEach(t => clearTimeout(t));
+    simulationRef.current = [];
+
+    const store = useAppStore.getState();
+    store.resetExecutionState();
+
+    const order = getTopoOrder(wf);
+    const STEP_DELAY = 800; // 每个节点执行时间
+
+    // 让边变为动画状态
+    setEdges(eds => eds.map(e => ({ ...e, animated: true, style: { ...e.style, stroke: '#3b82f6', strokeWidth: 2 } })));
+
+    order.forEach((nodeId, idx) => {
+      // 设置当前节点
+      const t1 = setTimeout(() => {
+        useAppStore.getState().setCurrentNode(nodeId);
+      }, idx * STEP_DELAY);
+      simulationRef.current.push(t1);
+
+      // 标记节点完成
+      const t2 = setTimeout(() => {
+        useAppStore.getState().markNodeExecuted(nodeId);
+        useAppStore.getState().setCurrentNode(null);
+      }, (idx + 1) * STEP_DELAY - 100);
+      simulationRef.current.push(t2);
+    });
+
+    // 全部完成后恢复边样式
+    const tFinal = setTimeout(() => {
+      setEdges(eds => eds.map(e => ({
+        ...e,
+        animated: false,
+        style: { stroke: '#10b981', strokeWidth: 2 },
+      })));
+    }, order.length * STEP_DELAY + 200);
+    simulationRef.current.push(tFinal);
+  }, [getTopoOrder, setEdges]);
+
   const onExecute = useCallback(() => {
     if (!workflow || executing) return;
     
-    // 防抖：清除之前的定时器
     if (executeTimeoutRef.current) {
       clearTimeout(executeTimeoutRef.current);
     }
     
     setExecuting(true);
+
+    // 立即启动客户端模拟动画
+    simulateExecution(workflow);
     
     executeTimeoutRef.current = setTimeout(async () => {
       try {
@@ -526,39 +604,74 @@ export default function WorkflowCanvas() {
       } finally {
         setExecuting(false);
       }
-    }, 300); // 300ms 防抖延迟
-  }, [workflow, executing, setActiveMissionId, setMissionState, upsertHistory]);
+    }, 300);
+  }, [workflow, executing, setActiveMissionId, setMissionState, upsertHistory, simulateExecution]);
   
-  // 清理防抖定时器
+  // 清理定时器
   useEffect(() => {
     return () => {
       if (executeTimeoutRef.current) {
         clearTimeout(executeTimeoutRef.current);
       }
+      simulationRef.current.forEach(t => clearTimeout(t));
     };
   }, []);
 
+  // 任务完成/失败时清除 currentNode
+  useEffect(() => {
+    if (!missionState) return;
+    if (missionState.status === "completed" || missionState.status === "failed") {
+      useAppStore.getState().setCurrentNode(null);
+    }
+  }, [missionState?.status]);
+
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
-        <div className="text-sm font-semibold">工作流画布</div>
-        <button
-          className="inline-flex items-center justify-center rounded bg-emerald-600 px-3 py-2 text-sm text-white disabled:opacity-50 min-w-[100px]"
-          onClick={onExecute}
-          disabled={!workflow || executing}
-        >
+      <div className="flex items-center justify-between border-b border-slate-200/80 bg-white px-4 py-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-slate-600">画布</span>
+          {missionState && (
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+              missionState.status === "completed" ? "bg-emerald-100 text-emerald-700" :
+              missionState.status === "failed" ? "bg-red-100 text-red-700" :
+              missionState.status === "running" ? "bg-blue-100 text-blue-700" :
+              "bg-slate-100 text-slate-600"
+            }`}>
+              {missionState.status === "completed" ? "✓ 完成" :
+               missionState.status === "failed" ? "✗ 失败" :
+               missionState.status === "running" ? `▶ ${missionState.progress}%` :
+               missionState.status}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition-all hover:bg-slate-50 hover:shadow"
+            onClick={() => setShowNodeLibrary(true)}
+          >
+            <svg className="mr-1.5 h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            节点库
+          </button>
+          <button
+            className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed min-w-[80px]"
+            onClick={() => { resetExecutionState(); onExecute(); }}
+            disabled={!workflow || executing}
+          >
           {executing ? (
             <>
-              <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <svg className="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              执行中...
+              执行中
             </>
           ) : (
-            "执行工作流"
+            <>▶ 执行</>
           )}
-        </button>
+          </button>
+        </div>
       </div>
       <div className="flex-1">
         <ReactFlow
@@ -577,7 +690,7 @@ export default function WorkflowCanvas() {
           nodeTypes={NODE_TYPES}
           edgeTypes={EDGE_TYPES}
         >
-          <Background variant="dots" gap={20} />
+          <Background gap={20} color="#e2e8f0" />
           <Controls />
         </ReactFlow>
         
@@ -617,6 +730,11 @@ export default function WorkflowCanvas() {
           />
         )}
       </div>
+
+      {/* 节点库弹窗 */}
+      {showNodeLibrary && (
+        <NodeLibrary onClose={() => setShowNodeLibrary(false)} />
+      )}
     </div>
   );
 }

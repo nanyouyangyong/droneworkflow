@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useAppStore } from "@/store/useAppStore";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 interface WorkflowItem {
   id: string;
@@ -21,8 +22,8 @@ export default function WorkflowHistory() {
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [initialLoaded, setInitialLoaded] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<WorkflowItem | null>(null);
 
-  // 从后端加载工作流列表
   const fetchWorkflows = useCallback(async () => {
     try {
       const res = await fetch("/api/workflow/list?limit=50");
@@ -37,7 +38,6 @@ export default function WorkflowHistory() {
     return [];
   }, []);
 
-  // 加载工作流详情到画布
   const loadWorkflow = useCallback(async (workflowId: string) => {
     try {
       const res = await fetch(`/api/workflow/${workflowId}`);
@@ -57,13 +57,33 @@ export default function WorkflowHistory() {
     }
   }, [setWorkflow]);
 
-  // 初始化：加载工作流列表，并默认加载第一个
+  const handleDeleteClick = useCallback((item: WorkflowItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeleteTarget(item);
+  }, []);
+
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    try {
+      const res = await fetch(`/api/workflow/${deleteTarget.id}`, { method: "DELETE" });
+      if (res.ok) {
+        setWorkflows((prev) => prev.filter((w) => w.id !== deleteTarget.id));
+        if (selectedId === deleteTarget.id) {
+          setSelectedId(null);
+          setWorkflow(null);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to delete workflow:", error);
+    } finally {
+      setDeleteTarget(null);
+    }
+  }, [deleteTarget, selectedId, setWorkflow]);
+
   useEffect(() => {
     async function init() {
       setLoading(true);
       const list = await fetchWorkflows();
-      
-      // 如果当前没有工作流且列表不为空，加载第一个
       if (!workflow && list.length > 0 && !initialLoaded) {
         await loadWorkflow(list[0].id);
         setInitialLoaded(true);
@@ -72,11 +92,9 @@ export default function WorkflowHistory() {
       }
       setLoading(false);
     }
-
     init();
   }, [fetchWorkflows, loadWorkflow, workflow, initialLoaded]);
 
-  // 当大模型生成新工作流时，刷新列表
   useEffect(() => {
     if (workflow && initialLoaded) {
       fetchWorkflows();
@@ -88,20 +106,11 @@ export default function WorkflowHistory() {
     const today = new Date();
     const isToday = date.toDateString() === today.toDateString();
     if (isToday) {
-      return date.toLocaleTimeString("zh-CN", {
-        hour: "2-digit",
-        minute: "2-digit"
-      });
+      return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
     }
-    return date.toLocaleDateString("zh-CN", {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit"
-    });
+    return date.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
   };
 
-  // 刷新列表
   const handleRefresh = async () => {
     setLoading(true);
     await fetchWorkflows();
@@ -109,117 +118,86 @@ export default function WorkflowHistory() {
   };
 
   return (
-    <div className="flex h-full flex-col bg-white">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-        <div className="flex items-center space-x-2">
-          <span className="text-lg">📋</span>
-          <span className="text-sm font-semibold text-slate-800">工作流记录</span>
-        </div>
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={handleRefresh}
-            className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-            title="刷新"
-          >
-            <span className={loading ? "animate-spin inline-block" : ""}>🔄</span>
-          </button>
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-            {workflows.length} 条
-          </span>
-        </div>
+    <div className="flex items-center gap-2 px-3 py-2 min-h-[44px]">
+      {/* 标题 */}
+      <div className="flex items-center gap-1.5 shrink-0">
+        <span className="text-xs font-semibold text-slate-600">记录</span>
+        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 font-medium">
+          {workflows.length}
+        </span>
+        <button
+          onClick={handleRefresh}
+          className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+          title="刷新"
+        >
+          <svg className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        </button>
       </div>
 
-      {/* Current Workflow */}
-      {workflow && (
-        <div className="border-b border-slate-200 bg-blue-50 p-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <span className="text-sm">🎯</span>
-              <span className="text-sm font-medium text-blue-800">当前工作流</span>
-            </div>
-            <span className="rounded bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
-              {workflow.nodes.length} 节点
-            </span>
-          </div>
-          <div className="mt-1 text-xs text-blue-600 truncate">
-            {workflow.workflow_name || "未命名工作流"}
-          </div>
-        </div>
-      )}
+      {/* 分隔线 */}
+      <div className="h-5 w-px bg-slate-200 shrink-0" />
 
-      {/* Workflow List */}
-      <div className="app-scrollbar flex-1 overflow-y-auto overflow-x-hidden">
-        {loading && workflows.length === 0 ? (
-          <div className="flex h-full items-center justify-center p-4">
-            <div className="text-center">
-              <div className="mb-2 text-2xl animate-spin">⏳</div>
-              <div className="text-sm text-slate-400">加载中...</div>
-            </div>
-          </div>
-        ) : workflows.length === 0 ? (
-          <div className="flex h-full items-center justify-center p-4">
-            <div className="text-center">
-              <div className="mb-2 text-3xl opacity-50">📭</div>
-              <div className="text-sm text-slate-400">暂无工作流记录</div>
-              <div className="mt-1 text-xs text-slate-300">
-                生成工作流后会在此显示
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {workflows.map((item) => (
+      {/* 横向滚动的工作流列表 */}
+      <div className="app-scrollbar flex-1 min-w-0 overflow-x-auto overflow-y-hidden">
+        <div className="flex items-center gap-1.5 whitespace-nowrap">
+          {loading && workflows.length === 0 ? (
+            <span className="text-xs text-slate-400 animate-pulse">加载中...</span>
+          ) : workflows.length === 0 ? (
+            <span className="text-xs text-slate-400">暂无记录</span>
+          ) : (
+            workflows.map((item) => (
               <div
                 key={item.id}
-                className={`p-3 cursor-pointer transition-colors ${
+                className={`group relative flex items-center gap-2 rounded-lg border px-2.5 py-1.5 cursor-pointer transition-all shrink-0 ${
                   selectedId === item.id
-                    ? "bg-blue-50 border-l-2 border-l-blue-500"
-                    : "hover:bg-slate-50"
+                    ? "border-blue-300 bg-blue-50 shadow-sm"
+                    : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm"
                 }`}
                 onClick={() => loadWorkflow(item.id)}
               >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center space-x-2">
-                      <span className="text-xs text-slate-400">
-                        {formatDate(item.updatedAt)}
-                      </span>
-                      {selectedId === item.id && (
-                        <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-600">
-                          当前
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-1 text-sm text-slate-700 truncate font-medium">
-                      {item.name || "未命名工作流"}
-                    </div>
-                    {item.description && (
-                      <div className="mt-0.5 text-xs text-slate-400 truncate">
-                        {item.description}
-                      </div>
-                    )}
-                    <div className="mt-1 flex items-center space-x-3 text-xs text-slate-400">
-                      <span>📦 {item.nodeCount} 节点</span>
-                      <span>🔗 {item.edgeCount} 连接</span>
-                    </div>
-                  </div>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  {selectedId === item.id && (
+                    <span className="flex h-1.5 w-1.5 rounded-full bg-blue-500 shrink-0" />
+                  )}
+                  <span className={`text-xs font-medium truncate max-w-[120px] ${
+                    selectedId === item.id ? "text-blue-700" : "text-slate-700"
+                  }`}>
+                    {item.name || "未命名"}
+                  </span>
+                  <span className="text-[10px] text-slate-400 shrink-0">
+                    {item.nodeCount}节点
+                  </span>
+                  <span className="text-[10px] text-slate-400 shrink-0">
+                    {formatDate(item.updatedAt)}
+                  </span>
                 </div>
+                {/* 删除按钮 */}
+                <button
+                  onClick={(e) => handleDeleteClick(item, e)}
+                  className="opacity-0 group-hover:opacity-100 rounded p-0.5 text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all shrink-0"
+                  title="删除工作流"
+                >
+                  <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Footer */}
-      {workflows.length > 0 && (
-        <div className="border-t border-slate-200 p-2">
-          <div className="flex items-center justify-between text-xs text-slate-400">
-            <span>共 {workflows.length} 条记录</span>
-            {loading && <span className="animate-pulse">刷新中...</span>}
-          </div>
+            ))
+          )}
         </div>
-      )}
+      </div>
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="删除工作流"
+        message={`确定要删除「${deleteTarget?.name || '未命名'}」吗？此操作不可撤销。`}
+        confirmText="删除"
+        cancelText="取消"
+        variant="danger"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }

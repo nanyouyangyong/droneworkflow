@@ -96,9 +96,19 @@ export default function LogPanel() {
     socket.on("mission:log", (payload: { missionId: string; log: LogEvent }) => {
       if (payload.missionId !== missionId) return;
       appendLogs([payload.log]);
-      // 同时追加到子任务日志分组
       if (payload.log.droneId) {
         appendSubMissionLog(payload.log.droneId, payload.log);
+      }
+      // 追踪节点执行状态到画布
+      const store = useAppStore.getState();
+      if (payload.log.nodeId) {
+        if (payload.log.level === "error") {
+          store.markNodeFailed(payload.log.nodeId);
+        } else if (payload.log.level === "success") {
+          store.markNodeExecuted(payload.log.nodeId);
+        } else if (payload.log.level === "info") {
+          store.setCurrentNode(payload.log.nodeId);
+        }
       }
     });
 
@@ -113,6 +123,14 @@ export default function LogPanel() {
           ...(payload.state.progress !== undefined && { progress: payload.state.progress }),
           ...(payload.state.currentNode !== undefined && { currentNode: payload.state.currentNode }),
         });
+        // 同步 currentNode 到画布
+        const store = useAppStore.getState();
+        if (payload.state.currentNode) {
+          store.setCurrentNode(payload.state.currentNode);
+        }
+        if (payload.state.status === "completed" || payload.state.status === "failed") {
+          store.setCurrentNode(null);
+        }
       }
     );
 

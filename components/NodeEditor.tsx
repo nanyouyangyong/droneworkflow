@@ -33,7 +33,11 @@ export default function NodeEditor({ node, onNodeUpdate, onClose }: NodeEditorPr
 
   const handleSave = () => {
     if (editedNode) {
-      onNodeUpdate(editedNode);
+      const safeNode = {
+        ...editedNode,
+        label: editedNode.label?.trim() || editedNode.type || '未命名',
+      };
+      onNodeUpdate(safeNode);
       onClose();
     }
   };

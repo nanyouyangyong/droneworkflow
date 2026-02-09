@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 interface NodeLibraryProps {
   onClose?: () => void;
+  onAddNode?: (nodeType: string) => void;
 }
 
 const nodeTypes = [
@@ -37,7 +38,7 @@ const categoryTagColors: Record<string, string> = {
   "流程": "bg-violet-100 text-violet-700",
 };
 
-export default function NodeLibrary({ onClose }: NodeLibraryProps) {
+export default function NodeLibrary({ onClose, onAddNode }: NodeLibraryProps) {
   const [filter, setFilter] = useState("全部");
   const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -64,12 +65,12 @@ export default function NodeLibrary({ onClose }: NodeLibraryProps) {
       className="fixed inset-0 z-[9000] flex items-center justify-center bg-black/30 backdrop-blur-sm"
       onClick={(e) => { if (e.target === overlayRef.current) onClose?.(); }}
     >
-      <div className="w-[520px] max-h-[70vh] rounded-2xl bg-white shadow-2xl border border-slate-200/50 flex flex-col overflow-hidden">
+      <div className="w-[520px] h-[500px] rounded-2xl bg-white shadow-2xl border border-slate-200/50 flex flex-col overflow-hidden">
         {/* Header */}
         <div className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-slate-100">
           <div>
             <h2 className="text-sm font-semibold text-slate-800">节点库</h2>
-            <p className="text-[11px] text-slate-400 mt-0.5">拖拽节点到画布中使用</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">拖拽或双击节点添加到画布</p>
           </div>
           <button
             onClick={onClose}
@@ -106,7 +107,8 @@ export default function NodeLibrary({ onClose }: NodeLibraryProps) {
                 key={node.type}
                 draggable
                 onDragStart={(event) => handleDragStart(event, node.type)}
-                className={`group cursor-grab rounded-xl border-2 p-3 transition-all hover:shadow-md hover:scale-[1.02] active:cursor-grabbing active:scale-95 ${
+                onDoubleClick={() => { onAddNode?.(node.type); }}
+                className={`group cursor-grab rounded-xl border-2 p-3 transition-all hover:shadow-md hover:scale-[1.02] active:cursor-grabbing active:scale-95 select-none ${
                   categoryColors[node.category] || "border-slate-200 bg-white"
                 }`}
               >

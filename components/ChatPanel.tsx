@@ -23,7 +23,6 @@ export default function ChatPanel() {
   const setModel = useAppStore((s) => s.setModel);
   const messages = useAppStore((s) => s.messages);
   const addMessage = useAppStore((s) => s.addMessage);
-  const updateLastMessage = useAppStore((s) => s.updateLastMessage);
   const setMessages = useAppStore((s) => s.setMessages);
   const setWorkflow = useAppStore((s) => s.setWorkflow);
 
@@ -34,6 +33,7 @@ export default function ChatPanel() {
   const [streamingContent, setStreamingContent] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const thinkingRef = useRef<string>("");
 
   const placeholder = useMemo(
     () => "描述你的无人机任务，如：'巡查A区域并拍照，电量低于30%时返航'",
@@ -86,36 +86,44 @@ export default function ChatPanel() {
     addMessage("user", text);
     setBusy(true);
     setStreamingContent("");
+    thinkingRef.current = "";
 
-    // 创建 AbortController 用于取消请求
     abortControllerRef.current = new AbortController();
-
-    // 添加一个占位的助手消息
-    addMessage("assistant", "");
 
     await streamParseWorkflow(text, model, sessionId, {
       signal: abortControllerRef.current.signal,
       onChunk: (content) => {
         setStreamingContent(content);
-        updateLastMessage(content);
+        thinkingRef.current = content;
       },
       onComplete: (workflow) => {
+        const thinking = thinkingRef.current;
         if (workflow) {
           setWorkflow(workflow);
-          updateLastMessage("已生成工作流，请在画布确认/调整后执行。");
+          const finalMsg = thinking
+            ? `<think>${thinking}</think>\n已生成工作流，请在画布确认/调整后执行。`
+            : "已生成工作流，请在画布确认/调整后执行。";
+          addMessage("assistant", finalMsg);
         } else {
-          updateLastMessage("工作流解析失败，请重试。");
+          const finalMsg = thinking
+            ? `<think>${thinking}</think>\n工作流解析失败，请重试。`
+            : "工作流解析失败，请重试。";
+          addMessage("assistant", finalMsg);
         }
       },
       onError: (message) => {
-        updateLastMessage(`错误: ${message}`);
+        const thinking = thinkingRef.current;
+        const errorMsg = thinking
+          ? `<think>${thinking}</think>\n错误: ${message}`
+          : `错误: ${message}`;
+        addMessage("assistant", errorMsg);
       }
     });
 
     setBusy(false);
     setStreamingContent("");
     abortControllerRef.current = null;
-  }, [input, busy, model, sessionId, addMessage, updateLastMessage, setWorkflow]);
+  }, [input, busy, model, sessionId, addMessage, setWorkflow]);
 
   const onSend = onSendStream;
 
@@ -124,10 +132,15 @@ export default function ChatPanel() {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
+      // 如果有思考内容，保留到消息中
+      const thinking = thinkingRef.current;
+      if (thinking) {
+        addMessage("assistant", `<think>${thinking}</think>\n(已中断)`);
+      }
       setBusy(false);
       setStreamingContent("");
     }
-  }, []);
+  }, [addMessage]);
 
   const handleKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -227,6 +240,11 @@ export default function ChatPanel() {
                   );
                 }
 
+                // 解析思考过程和最终回答
+                const thinkMatch = m.content.match(/^<think>([\s\S]*?)<\/think>\n?([\s\S]*)$/);
+                const thinkPart = thinkMatch ? thinkMatch[1].trim() : null;
+                const answerPart = thinkMatch ? thinkMatch[2].trim() : m.content;
+
                 return (
                   <div key={m.id} className="flex justify-start gap-2">
                     <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-slate-700 to-slate-500 text-[9px] font-bold text-white">
@@ -234,8 +252,21 @@ export default function ChatPanel() {
                     </div>
                     <div className="max-w-[85%] min-w-0">
                       <div className="rounded-2xl rounded-tl-md bg-white px-3.5 py-2.5 text-slate-700 shadow-sm ring-1 ring-slate-200/80">
+                        {thinkPart && (
+                          <details className="mb-2 group">
+                            <summary className="cursor-pointer select-none text-[11px] font-medium text-slate-400 hover:text-slate-600 transition-colors flex items-center gap-1">
+                              <svg className="h-3 w-3 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                              </svg>
+                              思考过程
+                            </summary>
+                            <div className="mt-1.5 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500 leading-5 whitespace-pre-wrap break-words border border-slate-100 max-h-[200px] overflow-y-auto app-scrollbar">
+                              {thinkPart}
+                            </div>
+                          </details>
+                        )}
                         <div className="whitespace-pre-wrap break-words text-[13px] leading-5">
-                          {m.content}
+                          {answerPart}
                         </div>
                       </div>
                       <div className="mt-0.5 text-[10px] text-slate-400">{formatTime(m.ts)}</div>
@@ -249,14 +280,26 @@ export default function ChatPanel() {
                   <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-slate-700 to-slate-500 text-[9px] font-bold text-white">
                     AI
                   </div>
-                  <div>
+                  <div className="max-w-[85%] min-w-0">
                     <div className="rounded-2xl rounded-tl-md bg-white px-3.5 py-2.5 shadow-sm ring-1 ring-slate-200/80">
-                      <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                        <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
-                        <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400 [animation-delay:150ms]" />
-                        <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400 [animation-delay:300ms]" />
-                        <span className="ml-1">生成中…</span>
-                      </div>
+                      {streamingContent ? (
+                        <div>
+                          <div className="flex items-center gap-1.5 mb-2">
+                            <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
+                            <span className="text-[11px] font-medium text-blue-500 animate-pulse">思考中...</span>
+                          </div>
+                          <div className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500 leading-5 whitespace-pre-wrap break-words border border-slate-100 max-h-[150px] overflow-y-auto app-scrollbar">
+                            {streamingContent}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                          <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
+                          <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400 [animation-delay:150ms]" />
+                          <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400 [animation-delay:300ms]" />
+                          <span className="ml-1">思考中…</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

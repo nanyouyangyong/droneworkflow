@@ -10,7 +10,8 @@ import ReactFlow, {
   useEdgesState,
   useNodesState,
   type OnNodesChange,
-  type OnEdgesChange
+  type OnEdgesChange,
+  MarkerType
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { useAppStore } from "@/store/useAppStore";
@@ -161,8 +162,10 @@ function wfToReactFlow(wf: ParsedWorkflow): { nodes: Node[]; edges: Edge[] } {
     target: e.to,
     label: e.condition ?? undefined,
     animated: false,
+    type: 'default',
     style: { stroke: '#94a3b8', strokeWidth: 1.5 },
     labelStyle: { fontSize: 10, fill: '#64748b' },
+    markerEnd: { type: MarkerType.ArrowClosed, color: '#94a3b8', width: 16, height: 16 },
   }));
 
   return { nodes, edges };
@@ -171,8 +174,8 @@ function wfToReactFlow(wf: ParsedWorkflow): { nodes: Node[]; edges: Edge[] } {
 function reactFlowToWf(nodes: Node[], edges: Edge[], workflowName: string): ParsedWorkflow {
   const workflowNodes: WorkflowNode[] = nodes.map(n => ({
     id: n.id,
-    type: n.data.nodeType || n.data.label,
-    label: n.data.label,
+    type: n.data.nodeType || 'action',
+    label: n.data.label ?? n.data.nodeType ?? '',
     params: n.data.params || {}
   }));
 
@@ -215,10 +218,11 @@ export default function WorkflowCanvas() {
   const [executing, setExecuting] = useState(false);
   const executeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [showNodeLibrary, setShowNodeLibrary] = useState(false);
-  const simulationRef = useRef<NodeJS.Timeout[]>([]);
 
   // Dedupe workflow <-> canvas syncing to avoid infinite loops / memory blowups
   const lastSyncedWorkflowStrRef = useRef<string | null>(null);
+  // 标记当前是否是画布内部编辑引起的 workflow 变化（不需要重新布局）
+  const internalEditRef = useRef(false);
 
   const initial = useMemo(() => {
     if (!workflow) return { nodes: [], edges: [] };
@@ -239,7 +243,14 @@ export default function WorkflowCanvas() {
     
     const workflowStr = JSON.stringify(workflow);
 
-    // Only update canvas if workflow actually changed
+    // 如果是内部编辑引起的 workflow 变化，跳过重新布局
+    if (internalEditRef.current) {
+      internalEditRef.current = false;
+      lastSyncedWorkflowStrRef.current = workflowStr;
+      return;
+    }
+
+    // 只有外部更新（如 LLM 生成新工作流）才重新布局
     if (lastSyncedWorkflowStrRef.current !== workflowStr) {
       const next = wfToReactFlow(workflow);
       setNodes(next.nodes);
@@ -255,7 +266,10 @@ export default function WorkflowCanvas() {
         ...eds,
         {
           ...connection,
-          id: `${connection.source}-${connection.target}`
+          id: `${connection.source}-${connection.target}`,
+          type: 'default',
+          style: { stroke: '#94a3b8', strokeWidth: 1.5 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#94a3b8', width: 16, height: 16 },
         }
       ]);
     },
@@ -288,6 +302,8 @@ export default function WorkflowCanvas() {
       const updatedStr = JSON.stringify(updatedWorkflow);
       if (lastSyncedWorkflowStrRef.current !== updatedStr) {
         lastSyncedWorkflowStrRef.current = updatedStr;
+        // 标记为内部编辑，避免触发 wfToReactFlow 重新布局
+        internalEditRef.current = true;
         setWorkflow(updatedWorkflow);
       }
     }
@@ -296,6 +312,12 @@ export default function WorkflowCanvas() {
   // Handle keyboard events for delete
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      // 如果焦点在可编辑元素中（如 NodeEditor 的 input），忽略键盘事件
+      const tag = (event.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (event.target as HTMLElement)?.isContentEditable) {
+        return;
+      }
+
       if (event.key === 'Delete' || event.key === 'Backspace') {
         // Delete selected nodes and edges
         const selectedNodes = nodes.filter(n => n.selected);
@@ -466,6 +488,7 @@ export default function WorkflowCanvas() {
                 data: {
                   ...n.data,
                   label: updatedNode.label,
+                  nodeType: updatedNode.type || n.data.nodeType,
                   params: updatedNode.params
                 }
               }
@@ -475,6 +498,26 @@ export default function WorkflowCanvas() {
       });
     },
     [setNodes, edges]
+  );
+
+  // 双击节点库添加节点到画布
+  const addNodeFromLibrary = useCallback(
+    (nodeType: string) => {
+      const offsetX = 100 + Math.random() * 300;
+      const offsetY = 100 + Math.random() * 200;
+      const newNode: Node = {
+        id: `${nodeType}-${Date.now()}`,
+        type: 'custom',
+        position: { x: offsetX, y: offsetY },
+        data: {
+          label: nodeType,
+          nodeType: nodeType,
+          params: {}
+        },
+      };
+      setNodes((nds) => [...nds, newNode]);
+    },
+    [setNodes]
   );
 
   const handleEdgeUpdate = useCallback(
@@ -494,75 +537,7 @@ export default function WorkflowCanvas() {
     [setEdges, nodes]
   );
 
-  // 获取拓扑排序的节点 ID 列表
-  const getTopoOrder = useCallback((wf: ParsedWorkflow): string[] => {
-    const childrenOf = new Map<string, string[]>();
-    const inDegree = new Map<string, number>();
-    for (const n of wf.nodes) inDegree.set(n.id, 0);
-    for (const e of wf.edges) {
-      childrenOf.set(e.from, [...(childrenOf.get(e.from) || []), e.to]);
-      inDegree.set(e.to, (inDegree.get(e.to) || 0) + 1);
-    }
-    const queue = wf.nodes.filter(n => (inDegree.get(n.id) || 0) === 0).map(n => n.id);
-    const order: string[] = [];
-    while (queue.length > 0) {
-      const id = queue.shift()!;
-      order.push(id);
-      for (const child of (childrenOf.get(id) || [])) {
-        const deg = (inDegree.get(child) || 1) - 1;
-        inDegree.set(child, deg);
-        if (deg === 0) queue.push(child);
-      }
-    }
-    // 添加未被遍历到的孤立节点
-    for (const n of wf.nodes) {
-      if (!order.includes(n.id)) order.push(n.id);
-    }
-    return order;
-  }, []);
-
-  // 客户端模拟执行动画
-  const simulateExecution = useCallback((wf: ParsedWorkflow) => {
-    // 清理之前的模拟
-    simulationRef.current.forEach(t => clearTimeout(t));
-    simulationRef.current = [];
-
-    const store = useAppStore.getState();
-    store.resetExecutionState();
-
-    const order = getTopoOrder(wf);
-    const STEP_DELAY = 800; // 每个节点执行时间
-
-    // 让边变为动画状态
-    setEdges(eds => eds.map(e => ({ ...e, animated: true, style: { ...e.style, stroke: '#3b82f6', strokeWidth: 2 } })));
-
-    order.forEach((nodeId, idx) => {
-      // 设置当前节点
-      const t1 = setTimeout(() => {
-        useAppStore.getState().setCurrentNode(nodeId);
-      }, idx * STEP_DELAY);
-      simulationRef.current.push(t1);
-
-      // 标记节点完成
-      const t2 = setTimeout(() => {
-        useAppStore.getState().markNodeExecuted(nodeId);
-        useAppStore.getState().setCurrentNode(null);
-      }, (idx + 1) * STEP_DELAY - 100);
-      simulationRef.current.push(t2);
-    });
-
-    // 全部完成后恢复边样式
-    const tFinal = setTimeout(() => {
-      setEdges(eds => eds.map(e => ({
-        ...e,
-        animated: false,
-        style: { stroke: '#10b981', strokeWidth: 2 },
-      })));
-    }, order.length * STEP_DELAY + 200);
-    simulationRef.current.push(tFinal);
-  }, [getTopoOrder, setEdges]);
-
-  const onExecute = useCallback(() => {
+  const onExecute = useCallback(async () => {
     if (!workflow || executing) return;
     
     if (executeTimeoutRef.current) {
@@ -570,42 +545,59 @@ export default function WorkflowCanvas() {
     }
     
     setExecuting(true);
+    resetExecutionState();
 
-    // 立即启动客户端模拟动画
-    simulateExecution(workflow);
-    
-    executeTimeoutRef.current = setTimeout(async () => {
-      try {
-        const res = await fetch("/api/workflow/execute", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ workflow })
-        });
+    // 执行期间边变为动画状态
+    setEdges(eds => eds.map(e => ({
+      ...e,
+      animated: true,
+      style: { stroke: '#3b82f6', strokeWidth: 2 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: '#3b82f6', width: 16, height: 16 },
+    })));
 
-        if (!res.ok) {
-          setExecuting(false);
-          return;
-        }
-        const data = (await res.json()) as { missionId: string; state: any };
+    try {
+      const res = await fetch("/api/workflow/execute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workflow })
+      });
 
-        setActiveMissionId(data.missionId);
-        setMissionState(data.state);
-
-        upsertHistory({
-          id: data.missionId,
-          ts: Date.now(),
-          instruction: workflow.workflow_name,
-          nodeCount: workflow.nodes.length,
-          status: data.state.status,
-          missionId: data.missionId
-        });
-      } catch (error) {
-        console.error('Execute workflow failed:', error);
-      } finally {
+      if (!res.ok) {
+        // 执行失败 — 边恢复默认
+        setEdges(eds => eds.map(e => ({
+          ...e,
+          animated: false,
+          style: { stroke: '#ef4444', strokeWidth: 2 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#ef4444', width: 16, height: 16 },
+        })));
         setExecuting(false);
+        return;
       }
-    }, 300);
-  }, [workflow, executing, setActiveMissionId, setMissionState, upsertHistory, simulateExecution]);
+      const data = (await res.json()) as { missionId: string; state: any };
+
+      setActiveMissionId(data.missionId);
+      setMissionState(data.state);
+
+      upsertHistory({
+        id: data.missionId,
+        ts: Date.now(),
+        instruction: workflow.workflow_name,
+        nodeCount: workflow.nodes.length,
+        status: data.state.status,
+        missionId: data.missionId
+      });
+    } catch (error) {
+      console.error('Execute workflow failed:', error);
+      setEdges(eds => eds.map(e => ({
+        ...e,
+        animated: false,
+        style: { stroke: '#ef4444', strokeWidth: 2 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: '#ef4444', width: 16, height: 16 },
+      })));
+    } finally {
+      setExecuting(false);
+    }
+  }, [workflow, executing, setActiveMissionId, setMissionState, upsertHistory, resetExecutionState, setEdges]);
   
   // 清理定时器
   useEffect(() => {
@@ -613,17 +605,31 @@ export default function WorkflowCanvas() {
       if (executeTimeoutRef.current) {
         clearTimeout(executeTimeoutRef.current);
       }
-      simulationRef.current.forEach(t => clearTimeout(t));
     };
   }, []);
 
-  // 任务完成/失败时清除 currentNode
+  // 任务完成/失败时：清除 currentNode + 恢复边样式
   useEffect(() => {
     if (!missionState) return;
-    if (missionState.status === "completed" || missionState.status === "failed") {
+    const { status } = missionState;
+    if (status === "completed") {
       useAppStore.getState().setCurrentNode(null);
+      setEdges(eds => eds.map(e => ({
+        ...e,
+        animated: false,
+        style: { stroke: '#10b981', strokeWidth: 2 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: '#10b981', width: 16, height: 16 },
+      })));
+    } else if (status === "failed") {
+      useAppStore.getState().setCurrentNode(null);
+      setEdges(eds => eds.map(e => ({
+        ...e,
+        animated: false,
+        style: { stroke: '#ef4444', strokeWidth: 2 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: '#ef4444', width: 16, height: 16 },
+      })));
     }
-  }, [missionState?.status]);
+  }, [missionState?.status, setEdges]);
 
   return (
     <div className="flex h-full flex-col">
@@ -656,7 +662,7 @@ export default function WorkflowCanvas() {
           </button>
           <button
             className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed min-w-[80px]"
-            onClick={() => { resetExecutionState(); onExecute(); }}
+            onClick={onExecute}
             disabled={!workflow || executing}
           >
           {executing ? (
@@ -733,7 +739,7 @@ export default function WorkflowCanvas() {
 
       {/* 节点库弹窗 */}
       {showNodeLibrary && (
-        <NodeLibrary onClose={() => setShowNodeLibrary(false)} />
+        <NodeLibrary onClose={() => setShowNodeLibrary(false)} onAddNode={addNodeFromLibrary} />
       )}
     </div>
   );

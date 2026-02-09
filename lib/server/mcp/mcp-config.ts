@@ -179,9 +179,6 @@ function getDefaultServerConfigs(): Record<string, MCPServerConfig> {
 // 配置管理器单例
 export const mcpConfigManager = new MCPConfigManager();
 
-// 兼容旧版API
-export const MCP_SERVERS = getDefaultServerConfigs();
-
 export function getEnabledServers(): MCPServerConfig[] {
   return mcpConfigManager.getEnabledServers();
 }

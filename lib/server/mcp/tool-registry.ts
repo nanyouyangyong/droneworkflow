@@ -78,23 +78,6 @@ export class MCPToolRegistry {
     return undefined;
   }
 
-  // 解析工具名称
-  parseToolName(fullToolName: string): { serverName: string | null; toolName: string } {
-    const colonIndex = fullToolName.indexOf(":");
-    if (colonIndex > 0) {
-      return {
-        serverName: fullToolName.substring(0, colonIndex),
-        toolName: fullToolName.substring(colonIndex + 1),
-      };
-    }
-    return { serverName: null, toolName: fullToolName };
-  }
-
-  // 构建完整工具名
-  buildFullName(serverName: string, toolName: string): string {
-    return `${serverName}:${toolName}`;
-  }
-
   // 检查工具是否存在
   hasTool(fullName: string): boolean {
     return this.tools.has(fullName);

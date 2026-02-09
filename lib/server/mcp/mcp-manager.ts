@@ -298,10 +298,3 @@ class MCPManager {
 // 单例实例
 export const mcpManager = new MCPManager();
 
-// 兼容旧版API
-export async function callMCPToolMulti(
-  fullToolName: string,
-  args: Record<string, any>
-): Promise<any> {
-  return mcpManager.callTool(fullToolName, args);
-}

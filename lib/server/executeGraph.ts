@@ -11,7 +11,7 @@ import {
 } from "@/lib/server/missionStore";
 import { Mission } from "@/lib/server/models";
 import { connectDB } from "@/lib/server/db";
-import { callMCPTool, mcpManager, callMCPToolMulti } from "@/lib/server/mcp";
+import { mcpManager } from "@/lib/server/mcp";
 
 const ExecState = Annotation.Root({
   missionId: Annotation<string>({
@@ -142,14 +142,9 @@ const NODE_TYPE_TO_MCP_TOOL: Record<string, ToolMapping> = {
   }
 };
 
-// 调用MCP工具（支持多服务）
+// 调用MCP工具（统一使用 mcpManager，支持自动检测服务）
 async function callTool(toolName: string, args: Record<string, any>): Promise<any> {
-  // 如果工具名包含“:”，使用多服务管理器
-  if (toolName.includes(":")) {
-    return callMCPToolMulti(toolName, args);
-  }
-  // 否则使用默认的drone服务
-  return callMCPTool(toolName, args);
+  return mcpManager.callToolAuto(toolName, args);
 }
 
 // 通过MCP服务执行单个节点

@@ -16,17 +16,23 @@ export interface DroneTool {
 }
 
 // ============================================================================
-// activeDroneId —— 当前激活的无人机 ID（方案 A）
-// connect_drone 成功后自动设置，后续工具默认对此 ID 操作
+// 无人机 ID 解析 —— 支持多无人机并发
+// - 显式传入 droneId（多机场景，每个子任务携带自己的 droneId）
+// - 兼容 activeDroneId（单机场景，connect_drone 后自动设置）
 // ============================================================================
 
 let activeDroneId: string | null = null;
 
-function requireActiveDrone(): string {
-  if (!activeDroneId) {
-    throw new Error("没有激活的无人机，请先调用 connect_drone");
+function resolveDroneId(params: any): string {
+  // 优先使用显式传入的 droneId
+  if (params?.droneId && typeof params.droneId === "string") {
+    return params.droneId;
   }
-  return activeDroneId;
+  // 兼容单机场景：使用 activeDroneId
+  if (activeDroneId) {
+    return activeDroneId;
+  }
+  throw new Error("没有指定无人机 ID，请传入 droneId 参数或先调用 connect_drone");
 }
 
 function unwrap(res: any): any {
@@ -60,23 +66,29 @@ const connectDroneTool: DroneTool = {
   execute: async (params) => {
     const res = await client.connectDrone(params.droneId, params.name);
     const data = unwrap(res);
+    // 单机兼容：设置 activeDroneId
     activeDroneId = params.droneId;
-    return { ...data, activeDroneId };
+    return { ...data, activeDroneId: params.droneId };
   },
 };
 
 const disconnectDroneTool: DroneTool = {
   name: "disconnect_drone",
-  description: "断开当前无人机连接",
+  description: "断开无人机连接",
   inputSchema: {
     type: "object",
-    properties: {},
+    properties: {
+      droneId: {
+        type: "string",
+        description: "无人机设备ID（可选，不传则使用当前激活的无人机）",
+      },
+    },
   },
-  execute: async () => {
-    const droneId = requireActiveDrone();
+  execute: async (params) => {
+    const droneId = resolveDroneId(params);
     const res = await client.disconnectDrone(droneId);
     const data = unwrap(res);
-    activeDroneId = null;
+    if (droneId === activeDroneId) activeDroneId = null;
     return data;
   },
 };
@@ -97,7 +109,7 @@ const takeoffTool: DroneTool = {
     required: ["altitude"],
   },
   execute: async (params) => {
-    const droneId = requireActiveDrone();
+    const droneId = resolveDroneId(params);
     const res = await client.sendCommand(droneId, "takeoff", { altitude: params.altitude });
     return unwrap(res);
   },
@@ -110,8 +122,8 @@ const landTool: DroneTool = {
     type: "object",
     properties: {},
   },
-  execute: async () => {
-    const droneId = requireActiveDrone();
+  execute: async (params) => {
+    const droneId = resolveDroneId(params);
     const res = await client.sendCommand(droneId, "land", {});
     return unwrap(res);
   },
@@ -139,7 +151,7 @@ const flyToTool: DroneTool = {
     required: ["lat", "lng"],
   },
   execute: async (params) => {
-    const droneId = requireActiveDrone();
+    const droneId = resolveDroneId(params);
     const res = await client.sendCommand(droneId, "fly_to", {
       lat: params.lat,
       lng: params.lng,
@@ -163,7 +175,7 @@ const hoverTool: DroneTool = {
     required: ["duration"],
   },
   execute: async (params) => {
-    const droneId = requireActiveDrone();
+    const droneId = resolveDroneId(params);
     const res = await client.sendCommand(droneId, "hover", { duration: params.duration });
     return unwrap(res);
   },
@@ -183,7 +195,7 @@ const takePhotoTool: DroneTool = {
     },
   },
   execute: async (params) => {
-    const droneId = requireActiveDrone();
+    const droneId = resolveDroneId(params);
     const res = await client.sendCommand(droneId, "take_photo", { count: params.count || 1 });
     return unwrap(res);
   },
@@ -204,7 +216,7 @@ const recordVideoTool: DroneTool = {
     required: ["action"],
   },
   execute: async (params) => {
-    const droneId = requireActiveDrone();
+    const droneId = resolveDroneId(params);
     const res = await client.sendCommand(droneId, "record_video", { action: params.action });
     return unwrap(res);
   },
@@ -217,8 +229,8 @@ const getDroneStatusTool: DroneTool = {
     type: "object",
     properties: {},
   },
-  execute: async () => {
-    const droneId = requireActiveDrone();
+  execute: async (params) => {
+    const droneId = resolveDroneId(params);
     const res = await client.getDroneStatus(droneId);
     return unwrap(res);
   },
@@ -231,8 +243,8 @@ const returnHomeTool: DroneTool = {
     type: "object",
     properties: {},
   },
-  execute: async () => {
-    const droneId = requireActiveDrone();
+  execute: async (params) => {
+    const droneId = resolveDroneId(params);
     const res = await client.sendCommand(droneId, "return_home", {});
     return unwrap(res);
   },
@@ -252,7 +264,7 @@ const checkBatteryTool: DroneTool = {
     },
   },
   execute: async (params) => {
-    const droneId = requireActiveDrone();
+    const droneId = resolveDroneId(params);
     const res = await client.sendCommand(droneId, "check_battery", { threshold: params.threshold || 30 });
     return unwrap(res);
   },

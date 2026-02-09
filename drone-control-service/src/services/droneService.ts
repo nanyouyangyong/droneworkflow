@@ -17,6 +17,7 @@ import {
   ValidationError,
   NotFoundError,
 } from "../domain/errors.js";
+import { eventBus } from "../infra/event-bus.js";
 
 // ============================================================================
 // Adapter 注册表 —— 后续新增 DJI/PX4 只需在这里注册
@@ -73,6 +74,10 @@ export async function connectDrone(req: ConnectRequest): Promise<{ device: Devic
   const telemetry = await adapter.getTelemetry(req.droneId);
   store.saveTelemetry(telemetry);
 
+  // 发布设备连接事件
+  eventBus.publish({ type: "device_status", droneId: req.droneId, data: device, timestamp: Date.now() });
+  eventBus.publish({ type: "telemetry", droneId: req.droneId, data: telemetry, timestamp: Date.now() });
+
   return { device, telemetry };
 }
 
@@ -87,6 +92,10 @@ export async function disconnectDrone(droneId: string): Promise<Device> {
   device.status = "offline";
   device.lastSeenAt = Date.now();
   store.saveDevice(device);
+
+  // 发布设备断开事件
+  eventBus.publish({ type: "device_status", droneId, data: device, timestamp: Date.now() });
+
   return device;
 }
 
@@ -163,9 +172,15 @@ export async function executeCommand(
   command.finishedAt = Date.now();
   store.saveCommand(command);
 
+  // 发布命令状态事件
+  eventBus.publish({ type: "command_status", droneId, data: command, timestamp: Date.now() });
+
   // 更新设备状态
   const telemetry = await adapter.getTelemetry(droneId);
   store.saveTelemetry(telemetry);
+
+  // 发布遥测事件
+  eventBus.publish({ type: "telemetry", droneId, data: telemetry, timestamp: Date.now() });
 
   // 根据命令结果推断设备状态
   if (command.status === "succeeded") {
@@ -181,6 +196,9 @@ export async function executeCommand(
       device.status = newStatus;
       device.lastSeenAt = Date.now();
       store.saveDevice(device);
+
+      // 发布设备状态变更事件
+      eventBus.publish({ type: "device_status", droneId, data: device, timestamp: Date.now() });
     }
   }
 

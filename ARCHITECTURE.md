@@ -1,39 +1,39 @@
 # Drone Workflow 系统架构文档
 
-> 最后更新：2026-02-08
+> 最后更新：2026-02-09
 
 ---
 
 ## 一、系统总览
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
+┌─────────────────────────────────────────────────────────────┐
 │                        浏览器（React）                          │
 │  store/useAppStore ─ store/useAuthStore ─ lib/client/api       │
 │  components/ ─ app/login ─ app/register ─ app/page             │
-└──────────────┬──────────────────────────────────────────────────┘
+└──────────────┬──────────────────────────────────────────────┘
                │ HTTP / WebSocket
-┌──────────────┴──────────────────────────────────────────────────┐
+┌──────────────┴──────────────────────────────────────────────┐
 │              server.ts（端口 3000）                              │
-│  Next.js + Express + Socket.IO                                  │
-│  ├── app/api/auth/*        认证 API                             │
-│  ├── app/api/chat/*        聊天历史 API                         │
-│  ├── app/api/llm/*         LLM 解析 API                        │
-│  ├── app/api/workflow/*    工作流 CRUD + 执行 API               │
-│  ├── app/api/mission/*     任务查询 API                         │
-│  └── lib/server/           服务端核心逻辑                       │
-└──────────────┬──────────────────────────────────────────────────┘
+│  Next.js + Express + Socket.IO + AppEventBus                    │
+│  ├── app/api/workflow/execute  统一执行入口（单机/多机）         │
+│  ├── TaskOrchestrator         任务编排器                     │
+│  ├── SubMissionRunner(s)      子任务执行器（每架无人机一个）     │
+│  ├── DroneChannel(s)          无人机消息通道（每架一个）       │
+│  └── AppEventBus → Socket.IO   事件桥接 + 多级房间推送       │
+└──────────────┬──────────────────────────────────────────────┘
                │ stdio (MCP 协议)
-┌──────────────┴──────────────────────────────────────────────────┐
+┌──────────────┴──────────────────────────────────────────────┐
 │         mcp-client-typescript（MCP Server 进程）                │
-│  src/index.ts ─ src/tools.ts ─ src/resources.ts                │
+│  src/tools.ts ─ resolveDroneId()（显式 droneId 优先）         │
 │  src/httpDroneClient.ts → HTTP 调用 drone-control-service      │
-└──────────────┬──────────────────────────────────────────────────┘
-               │ HTTP (端口 4010)
-┌──────────────┴──────────────────────────────────────────────────┐
+└──────────────┬──────────────────────────────────────────────┘
+               │ HTTP (端口 4010) + SSE 事件推送
+┌──────────────┴──────────────────────────────────────────────┐
 │         drone-control-service（无人机控制服务）                  │
 │  routes/ → services/ → adapters/ → 真实/模拟无人机              │
-└─────────────────────────────────────────────────────────────────┘
+│  EventBus → SSE /api/v1/events → 遥测/命令状态推送            │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -90,8 +90,12 @@ droneworkflow/
 │       ├── llmParse.ts          # LLM 工作流解析（非流式）
 │       ├── llmPrompts.ts        # 共享提示词 + Mock 工作流 + JSON 解析
 │       ├── cache.ts             # 内存缓存（LLM 结果）
-│       ├── missionStore.ts      # 任务内存存储
-│       ├── executeGraph.ts      # 工作流执行引擎（LangGraph）
+│       ├── event-bus.ts         # 全局事件总线（AppEventBus）
+│       ├── drone-channel.ts     # 单架无人机消息通道（DroneChannel）
+│       ├── sub-mission-runner.ts # 子任务执行器（SubMissionRunner）
+│       ├── task-orchestrator.ts # 统一任务编排器（TaskOrchestrator）
+│       ├── missionStore.ts      # 任务内存存储（支持父子任务）
+│       ├── executeGraph.ts      # 工作流执行入口（薄代理层，委托 TaskOrchestrator）
 │       ├── auth/                # 认证模块
 │       │   ├── index.ts
 │       │   ├── jwt.ts           # JWT 签发/验证
@@ -118,7 +122,7 @@ droneworkflow/
 ├── mcp-client-typescript/       # MCP Server（独立进程）
 │   ├── src/
 │   │   ├── index.ts             # MCP Server 入口（stdio 传输）
-│   │   ├── tools.ts             # 无人机工具定义（activeDroneId 机制）
+│   │   ├── tools.ts             # 无人机工具定义（resolveDroneId 显式优先）
 │   │   ├── resources.ts         # 静态资源（能力/模板/节点类型）
 │   │   └── httpDroneClient.ts   # HTTP 客户端（调用 drone-control-service）
 │   ├── package.json
@@ -131,15 +135,17 @@ droneworkflow/
 │   │   │   ├── types.ts         # Device/Telemetry/Command 类型
 │   │   │   └── errors.ts        # ServiceError 错误类
 │   │   ├── infra/
-│   │   │   └── store.ts         # 内存存储（MemoryStore）
+│   │   │   ├── store.ts         # 内存存储（MemoryStore）
+│   │   │   └── event-bus.ts     # 事件总线（EventBus）
 │   │   ├── adapters/
 │   │   │   ├── droneAdapter.ts  # DroneAdapter 抽象接口
 │   │   │   └── mockAdapter.ts   # 模拟适配器
 │   │   ├── services/
-│   │   │   └── droneService.ts  # 业务编排
+│   │   │   └── droneService.ts  # 业务编排（集成 EventBus）
 │   │   └── routes/
 │   │       ├── drones.ts        # 设备管理路由
-│   │       └── commands.ts      # 命令下发路由
+│   │       ├── commands.ts      # 命令下发路由
+│   │       └── events.ts        # SSE 事件推送端点
 │   ├── package.json
 │   └── tsconfig.json
 │
@@ -217,36 +223,52 @@ droneworkflow/
 
 ---
 
-### 3.3 工作流执行引擎
+### 3.3 工作流执行引擎（多无人机编排）
 
 ```
 app/api/workflow/execute/route.ts
   │
+  ├── 单机格式: { workflow, droneId? }
+  └── 多机格式: { drones: [{droneId, workflow},...], strategy?, failurePolicy? }
+  │
   ▼
-lib/server/executeGraph.ts
+lib/server/executeGraph.ts（薄代理层）
+  ├── startExecution()        ← 单机兼容入口
+  └── startMultiDroneExecution() ← 多机入口
   │
-  ├── startExecution()
-  │     ├── 创建 MissionRecord (missionStore.ts)
-  │     ├── 保存到 MongoDB (Mission 模型)
-  │     └── 启动 LangGraph 状态机
+  ▼
+lib/server/task-orchestrator.ts（TaskOrchestrator）
   │
-  ├── runWorkflow() ←── LangGraph 节点
-  │     ├── 遍历工作流图（BFS）
-  │     ├── executeNodeViaMCP() ←── 通过 MCP 执行
-  │     │     ├── NODE_TYPE_TO_MCP_TOOL 映射表
-  │     │     ├── callTool() → mcpManager.callToolAuto()
-  │     │     └── 失败时降级 → executeNodeFallback()
-  │     ├── evaluateCondition() ←── 条件分支
-  │     └── emitLog/emitState → Socket.IO 实时推送
+  ├── execute(request)
+  │     ├── 创建父任务 + 子任务列表
+  │     ├── 订阅子任务事件 → 聚合进度
+  │     └── 根据 strategy 启动 SubMissionRunner(s)
+  │           ├── parallel: Promise.allSettled
+  │           └── sequential: 依次执行
   │
-  └── 结果保存到 MongoDB
+  ▼
+lib/server/sub-mission-runner.ts（SubMissionRunner）
+  │  ← 不知道自己是单机还是多机场景
+  ├── BFS 遍历工作流图
+  ├── 通过 DroneChannel 执行节点
+  ├── NODE_TYPE_TO_MCP_TOOL 映射表
+  ├── MCP 失败时降级模拟
+  └── 条件分支评估
+  │
+  ▼
+lib/server/drone-channel.ts（DroneChannel）
+  ├── callTool(name, args) → 自动注入 droneId
+  ├── emitLog/emitProgress/emitStatus → AppEventBus
+  └── 维护单架无人机的 DroneState
 ```
 
 **关键设计**：
-- 基于 LangGraph 的状态机驱动
-- 节点类型 → MCP 工具的声明式映射（`NODE_TYPE_TO_MCP_TOOL`）
+- **单机是多机的特例**：单机 = 1 个子任务的编排，代码路径完全一致
+- **高内聚**：DroneChannel（通信）、SubMissionRunner（执行）、TaskOrchestrator（编排）各司其职
+- **低耦合**：模块间通过 AppEventBus 事件通信，不直接引用
+- 节点类型 → MCP 工具的声明式映射
 - MCP 不可用时自动降级到本地模拟
-- Socket.IO 实时推送执行日志和状态
+- 支持 parallel/sequential 执行策略和 fail_fast/continue 失败策略
 
 ---
 
@@ -289,11 +311,12 @@ lib/server/mcp/
 
 ---
 
-### 3.5 无人机控制链路
+### 3.5 无人机控制链路（多机并发安全）
 
 ```
-executeGraph.ts
+DroneChannel (droneId="d1")
   │ callTool("drone:takeoff", {altitude: 30})
+  │ 自动注入 droneId → {droneId:"d1", altitude:30}
   ▼
 mcpManager.callToolAuto()
   │ 解析 "drone:takeoff" → 服务名 "drone" + 工具名 "takeoff"
@@ -301,24 +324,30 @@ mcpManager.callToolAuto()
 MCPClient (stdio 传输)
   │ MCP 协议调用
   ▼
-mcp-client-typescript/src/index.ts (MCP Server)
-  │ executeToolByName("takeoff", ...)
-  ▼
 mcp-client-typescript/src/tools.ts
-  │ requireActiveDrone() → activeDroneId
-  │ httpDroneClient.sendCommand(droneId, "takeoff", ...)
+  │ resolveDroneId(params) → 显式 droneId 优先
+  │ httpDroneClient.sendCommand("d1", "takeoff", ...)
   ▼
 drone-control-service (HTTP :4010)
   │ routes/commands.ts → services/droneService.ts
   │ → adapters/mockAdapter.ts (或真实适配器)
-  ▼
-无人机硬件 / 模拟器
+  │ → EventBus.publish(telemetry + command_status)
+  ▼                          │
+无人机硬件 / 模拟器            │ SSE /api/v1/events
+                              ▼
+                        server.ts SSE Consumer
+                              │
+                              ▼
+                        AppEventBus → Socket.IO
+                        io.to("drone:d1").emit("drone:telemetry")
 ```
 
 **关键设计**：
-- `activeDroneId` 机制：`connect_drone` 设置，后续工具自动使用
+- `resolveDroneId()` 机制：显式 droneId 优先，兼容单机 activeDroneId
+- 多机并发安全：每个子任务通过 DroneChannel 隔离，不共享全局状态
 - 适配器模式：`DroneAdapter` 接口，可替换 Mock/DJI/PX4
 - 命令幂等性：通过 `idempotencyKey` 防止重复执行
+- 遥测实时推送：EventBus → SSE → AppEventBus → Socket.IO
 - 设备状态自动推进：命令执行后根据结果更新设备状态
 
 ---
@@ -354,9 +383,51 @@ store/
 MongoDB Collections:
 ├── users           { email, password, name, role, createdAt }
 ├── workflows       { name, description, nodes[], edges[], createdAt }
-├── missions        { missionId, workflowSnapshot, status, progress, logs[] }
+├── missions        { missionId, workflowSnapshot, status, progress, logs[],
+│                     subMissions[], strategy, startedAt, completedAt }
 └── chathistories   { sessionId, messages[], workflowId }
 ```
+
+---
+
+### 3.8 多无人机消息分发架构
+
+```
+                        父任务房间: parent:xxx
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+        sub_0 房间       sub_1 房间       sub_2 房间
+        drone-001        drone-002        drone-003
+              │               │               │
+              ▼               ▼               ▼
+        子任务日志        子任务日志        子任务日志
+        子任务进度        子任务进度        子任务进度
+              │               │               │
+              └───────┬───────┘               │
+                      ▼                       │
+              进度聚合器 ◄────────────────┘
+              (TaskOrchestrator)
+                      │
+                      ▼
+              io.to("parent:xxx").emit("mission:aggregate")
+
+Socket.IO 房间类型：
+  - mission:{missionId}     单个任务/子任务日志+状态
+  - parent:{missionId}      父任务聚合事件
+  - drone:{droneId}         无人机遥测数据
+```
+
+**并发安全保障**：
+
+| 层级 | 机制 | 说明 |
+|------|------|------|
+| MCP 层 | 显式 `droneId` 参数 | 不再依赖全局状态，天然并发安全 |
+| 执行层 | `Promise.allSettled` 并行 | 一架失败不阻塞其他 |
+| 控制服务 | `MemoryStore` 按 droneId 索引 | Node.js 单线程无竞态 |
+| 命令层 | `idempotencyKey` | 网络重试不重复执行 |
+| 推送层 | Socket.IO 多级房间 | 日志/状态推送不串台 |
+| 遥测层 | SSE → AppEventBus → Socket.IO | 毫秒级遥测推送 |
 
 ---
 

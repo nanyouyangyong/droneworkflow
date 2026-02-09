@@ -18,7 +18,9 @@ export type WorkflowNodeType =
   | "避障"
   | "返航"
   | "条件判断"
-  | "定时拍照";
+  | "定时拍照"
+  | "parallel_fork"
+  | "parallel_join";
 
 export type WorkflowNode = {
   id: string;
@@ -47,10 +49,44 @@ export type LogEvent = {
   level: LogLevel;
   message: string;
   nodeId?: string;
+  droneId?: string;
 };
 
-export type MissionStatus = "pending" | "running" | "paused" | "completed" | "failed";
+export type MissionStatus = "pending" | "running" | "paused" | "completed" | "failed" | "partial_completed";
 
+// 执行策略：并行 or 顺序
+export type ExecutionStrategy = "parallel" | "sequential";
+
+// 失败处理策略
+export type FailurePolicy = "fail_fast" | "continue";
+
+// 子任务状态（每架无人机一个）
+export type SubMissionState = {
+  subMissionId: string;
+  droneId: string;
+  workflow: ParsedWorkflow;
+  status: MissionStatus;
+  progress: number;
+  currentNode?: string;
+  logs: LogEvent[];
+  startedAt?: number;
+  finishedAt?: number;
+  error?: string;
+};
+
+// 任务请求（统一入口，单机/多机兼容）
+export type TaskRequest = {
+  missionId: string;
+  name: string;
+  drones: Array<{
+    droneId: string;
+    workflow: ParsedWorkflow;
+  }>;
+  strategy?: ExecutionStrategy;
+  failurePolicy?: FailurePolicy;
+};
+
+// 任务状态（兼容单机/多机）
 export type MissionState = {
   missionId: string;
   name: string;
@@ -59,4 +95,9 @@ export type MissionState = {
   progress: number;
   currentNode?: string;
   logs: LogEvent[];
+
+  // 多无人机编排（单机时 subMissions 长度为 1）
+  subMissions?: SubMissionState[];
+  strategy?: ExecutionStrategy;
+  failurePolicy?: FailurePolicy;
 };

@@ -77,6 +77,20 @@ const nodeTypes = [
     description: "根据条件分支执行",
     icon: "🔀",
     category: "控制流程"
+  },
+  {
+    type: "parallel_fork",
+    label: "并行分发",
+    description: "将任务分配给多架无人机并行执行",
+    icon: "⑃",
+    category: "控制流程"
+  },
+  {
+    type: "parallel_join",
+    label: "并行汇聚",
+    description: "等待所有并行分支完成后继续",
+    icon: "⑂",
+    category: "控制流程"
   }
 ];
 

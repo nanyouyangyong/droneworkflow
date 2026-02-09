@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { dronesRouter } from "./routes/drones.js";
 import { commandsRouter } from "./routes/commands.js";
+import { eventsRouter } from "./routes/events.js";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "4010", 10);
@@ -32,6 +33,7 @@ app.use("/api/v1", (req, res, next) => {
 app.use("/api/v1/drones", dronesRouter);
 app.use("/api/v1/drones", commandsRouter);  // POST /:droneId/commands
 app.use("/api/v1/commands", commandsRouter); // GET /:commandId
+app.use("/api/v1/events", eventsRouter);     // SSE 事件推送
 
 // 健康检查
 app.get("/health", (_req, res) => {

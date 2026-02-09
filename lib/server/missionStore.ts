@@ -30,11 +30,35 @@ export function setMissionProgress(missionId: string, progress: number, currentN
   const rec = getMissionMap().get(missionId);
   if (!rec) return;
   rec.state.progress = progress;
-  rec.state.currentNode = currentNode;
+  if (currentNode !== undefined) rec.state.currentNode = currentNode;
 }
 
 export function setMissionStatus(missionId: string, status: MissionState["status"]) {
   const rec = getMissionMap().get(missionId);
   if (!rec) return;
   rec.state.status = status;
+}
+
+/** 获取所有活跃任务（running 状态） */
+export function getActiveMissions(): MissionRecord[] {
+  return Array.from(getMissionMap().values()).filter(
+    (r) => r.state.status === "running"
+  );
+}
+
+/** 获取所有任务列表 */
+export function getAllMissions(): MissionRecord[] {
+  return Array.from(getMissionMap().values());
+}
+
+/** 按 droneId 查找关联的子任务 */
+export function findMissionsByDroneId(droneId: string): MissionRecord[] {
+  return Array.from(getMissionMap().values()).filter((r) =>
+    r.state.subMissions?.some((s) => s.droneId === droneId)
+  );
+}
+
+/** 删除任务记录 */
+export function deleteMission(missionId: string): boolean {
+  return getMissionMap().delete(missionId);
 }

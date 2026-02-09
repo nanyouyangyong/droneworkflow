@@ -43,6 +43,11 @@ type AppState = {
   setMissionState: (state: MissionState | null) => void;
 
   appendLogs: (logs: LogEvent[]) => void;
+
+  // 按 droneId 分组的子任务日志
+  subMissionLogs: Record<string, LogEvent[]>;
+  appendSubMissionLog: (droneId: string, log: LogEvent) => void;
+  clearSubMissionLogs: () => void;
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -89,5 +94,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     const cur = get().missionState;
     if (!cur) return;
     set({ missionState: { ...cur, logs: [...cur.logs, ...logs] } });
-  }
+  },
+
+  subMissionLogs: {},
+  appendSubMissionLog: (droneId, log) =>
+    set((s) => ({
+      subMissionLogs: {
+        ...s.subMissionLogs,
+        [droneId]: [...(s.subMissionLogs[droneId] || []), log],
+      },
+    })),
+  clearSubMissionLogs: () => set({ subMissionLogs: {} }),
 }));

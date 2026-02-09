@@ -10,6 +10,8 @@ export const WORKFLOW_SYSTEM_PROMPT = `你是一个无人机工作流生成助�
 ## 可用的节点类型：
 - start: 开始节点（必须有且只有一个）
 - end: 结束节点（必须有且只有一个）
+- parallel_fork: 并行分叉节点，用于将任务分配给多架无人机同时执行。params 中包含 { droneIds: ["drone-001", "drone-002", ...] }，表示参与并行执行的无人机列表
+- parallel_join: 并行汇聚节点，等待所有并行分支完成后再继续
 - 起飞: 无人机起飞，参数 { altitude: number } 表示起飞高度（米）
 - 降落: 无人机降落
 - 悬停: 悬停等待，参数 { duration: number } 表示悬停时间（秒）
@@ -34,12 +36,25 @@ export const WORKFLOW_SYSTEM_PROMPT = `你是一个无人机工作流生成助�
   ]
 }
 
+## 多无人机并行任务规则：
+当用户描述的任务涉及多架无人机同时执行不同子任务时，必须使用并行结构：
+1. 使用 parallel_fork 节点作为并行分叉点，从 start 节点连接到 parallel_fork
+2. 每条并行分支代表一架无人机的独立任务链，分支中每个节点的 params 必须包含 droneId 字段标识所属无人机
+3. 所有并行分支最终汇聚到同一个 parallel_join 节点
+4. parallel_join 之后连接 end 节点
+5. parallel_fork 的 params.droneIds 列出所有参与的无人机 ID
+
+示例结构（2架无人机并行）：
+start → parallel_fork → [分支1: 起飞→巡检A→降落] → parallel_join → end
+                      → [分支2: 起飞→巡检B→降落] → parallel_join
+
 ## 注意事项：
 1. 每个工作流必须以 start 节点开始，以 end 节点结束
 2. 节点 ID 使用简短的唯一标识如 node_1, node_2 等
 3. 边的 ID 使用 edge_1, edge_2 等
 4. condition 字段用于条件分支，如 "battery < 30%" 表示电量低于30%时走这条边
 5. 只返回 JSON，不要有其他文字说明
+6. 如果用户提到多架无人机或多个区域需要同时执行，务必使用 parallel_fork/parallel_join 结构
 `;
 
 // ============================================================================
@@ -78,6 +93,76 @@ export function createMockWorkflow(userInput: string): ParsedWorkflow {
       { id: uuidv4(), from: rtbId, to: landId, condition: null },
       { id: uuidv4(), from: landId, to: endId, condition: null }
     ]
+  };
+}
+
+/**
+ * 生成多无人机并行 Mock 工作流
+ * 每架无人机一条独立分支，从 parallel_fork 出发，汇聚到 parallel_join
+ */
+export function createMockParallelWorkflow(
+  userInput: string,
+  droneCount: number = 2
+): ParsedWorkflow {
+  const startId = uuidv4();
+  const forkId = uuidv4();
+  const joinId = uuidv4();
+  const endId = uuidv4();
+
+  const droneIds = Array.from({ length: droneCount }, (_, i) =>
+    `drone-${String(i + 1).padStart(3, "0")}`
+  );
+
+  const nodes: ParsedWorkflow["nodes"] = [
+    { id: startId, type: "start", label: "开始" },
+    {
+      id: forkId,
+      type: "parallel_fork",
+      label: "并行分发",
+      params: { droneIds },
+    },
+  ];
+
+  const edges: ParsedWorkflow["edges"] = [
+    { id: uuidv4(), from: startId, to: forkId, condition: null },
+  ];
+
+  // 为每架无人机生成一条分支
+  const areas = ["A区域", "B区域", "C区域", "D区域", "E区域"];
+  for (let i = 0; i < droneCount; i++) {
+    const droneId = droneIds[i];
+    const takeoffId = uuidv4();
+    const patrolId = uuidv4();
+    const photoId = uuidv4();
+    const landId = uuidv4();
+
+    nodes.push(
+      { id: takeoffId, type: "起飞", label: `${droneId} 起飞`, params: { altitude: 30 + i * 10, droneId } },
+      { id: patrolId, type: "区域巡检", label: `${droneId} 巡检${areas[i % areas.length]}`, params: { areaName: areas[i % areas.length], droneId } },
+      { id: photoId, type: "定时拍照", label: `${droneId} 拍照`, params: { intervalSec: 10, droneId } },
+      { id: landId, type: "降落", label: `${droneId} 降落`, params: { droneId } },
+    );
+
+    edges.push(
+      { id: uuidv4(), from: forkId, to: takeoffId, condition: null },
+      { id: uuidv4(), from: takeoffId, to: patrolId, condition: null },
+      { id: uuidv4(), from: patrolId, to: photoId, condition: null },
+      { id: uuidv4(), from: photoId, to: landId, condition: null },
+      { id: uuidv4(), from: landId, to: joinId, condition: null },
+    );
+  }
+
+  nodes.push(
+    { id: joinId, type: "parallel_join", label: "等待全部完成" },
+    { id: endId, type: "end", label: "结束" },
+  );
+
+  edges.push({ id: uuidv4(), from: joinId, to: endId, condition: null });
+
+  return {
+    workflow_name: userInput.slice(0, 24) || "多机并行工作流",
+    nodes,
+    edges,
   };
 }
 

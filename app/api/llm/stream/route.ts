@@ -4,7 +4,7 @@ import { Workflow } from "@/lib/server/models/Workflow";
 import { getLLM, isLLMConfigured } from "@/lib/server/llm";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { v4 as uuidv4 } from "uuid";
-import { WORKFLOW_SYSTEM_PROMPT, createMockWorkflow, extractWorkflowJSON } from "@/lib/server/llmPrompts";
+import { WORKFLOW_SYSTEM_PROMPT, createMockWorkflow, createMockParallelWorkflow, extractWorkflowJSON } from "@/lib/server/llmPrompts";
 
 export const runtime = "nodejs";
 
@@ -44,8 +44,16 @@ export async function POST(req: Request) {
     
     // 检查 LLM 是否配置
     if (!isLLMConfigured()) {
+      // 检测是否为多无人机任务
+      const multiDroneKeywords = /多(架|个|台)|同时|并行|\d+\s*架|\d+\s*台|\d+\s*个无人机|多机/;
+      const droneCountMatch = userInput.match(/(\d+)\s*[架台个]/); 
+      const isMultiDrone = multiDroneKeywords.test(userInput);
+      const droneCount = droneCountMatch ? parseInt(droneCountMatch[1], 10) : 2;
+
       // 返回 mock 响应
-      const mockWorkflow = createMockWorkflow(userInput);
+      const mockWorkflow = isMultiDrone
+        ? createMockParallelWorkflow(userInput, Math.min(droneCount, 5))
+        : createMockWorkflow(userInput);
       
       // 保存 mock 工作流到数据库
       let savedWorkflowId = null;

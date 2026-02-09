@@ -23,15 +23,134 @@ const NODE_TYPES = {} as const;
 const EDGE_TYPES = {} as const;
 
 function wfToReactFlow(wf: ParsedWorkflow): { nodes: Node[]; edges: Edge[] } {
-  const nodes: Node[] = wf.nodes.map((n, idx) => ({
+  const COL_W = 220;
+  const ROW_H = 120;
+  const BASE_X = 50;
+  const BASE_Y = 50;
+
+  // 构建邻接表
+  const childrenOf = new Map<string, string[]>();
+  const parentOf = new Map<string, string[]>();
+  for (const e of wf.edges) {
+    childrenOf.set(e.from, [...(childrenOf.get(e.from) || []), e.to]);
+    parentOf.set(e.to, [...(parentOf.get(e.to) || []), e.from]);
+  }
+
+  const nodeMap = new Map(wf.nodes.map((n) => [n.id, n]));
+  const positions = new Map<string, { x: number; y: number }>();
+
+  // 找到 parallel_fork 和 parallel_join 节点
+  const forkNode = wf.nodes.find((n) => n.type === "parallel_fork");
+  const joinNode = wf.nodes.find((n) => n.type === "parallel_join");
+
+  if (forkNode && joinNode) {
+    // ---- 并行工作流布局 ----
+    // 阶段1：fork 之前的节点（串行）
+    const preNodes: string[] = [];
+    let cur = wf.nodes.find((n) => n.type === "start")?.id;
+    while (cur && cur !== forkNode.id) {
+      preNodes.push(cur);
+      const children = childrenOf.get(cur) || [];
+      cur = children[0];
+    }
+
+    // 放置 pre 节点
+    for (let i = 0; i < preNodes.length; i++) {
+      positions.set(preNodes[i], { x: BASE_X + i * COL_W, y: BASE_Y + 200 });
+    }
+
+    // 放置 fork 节点
+    const forkCol = preNodes.length;
+    positions.set(forkNode.id, { x: BASE_X + forkCol * COL_W, y: BASE_Y + 200 });
+
+    // 阶段2：并行分支
+    const branches: string[][] = [];
+    const forkChildren = childrenOf.get(forkNode.id) || [];
+    for (const firstChild of forkChildren) {
+      const branch: string[] = [];
+      let node = firstChild;
+      while (node && node !== joinNode.id) {
+        branch.push(node);
+        const children = childrenOf.get(node) || [];
+        node = children[0];
+      }
+      branches.push(branch);
+    }
+
+    // 找到最长分支长度
+    const maxBranchLen = Math.max(...branches.map((b) => b.length), 1);
+
+    // 放置并行分支节点（每条分支一行）
+    const branchStartCol = forkCol + 1;
+    const totalBranches = branches.length;
+    for (let row = 0; row < totalBranches; row++) {
+      const branch = branches[row];
+      const y = BASE_Y + row * ROW_H;
+      for (let col = 0; col < branch.length; col++) {
+        positions.set(branch[col], { x: BASE_X + (branchStartCol + col) * COL_W, y });
+      }
+    }
+
+    // 放置 join 节点
+    const joinCol = branchStartCol + maxBranchLen;
+    const joinY = BASE_Y + ((totalBranches - 1) * ROW_H) / 2;
+    positions.set(joinNode.id, { x: BASE_X + joinCol * COL_W, y: joinY });
+
+    // 阶段3：join 之后的节点（串行）
+    let postCur: string | undefined = (childrenOf.get(joinNode.id) || [])[0];
+    let postCol = joinCol + 1;
+    while (postCur) {
+      positions.set(postCur, { x: BASE_X + postCol * COL_W, y: joinY });
+      const postChildren: string[] = childrenOf.get(postCur) || [];
+      postCur = postChildren[0];
+      postCol++;
+    }
+
+    // 更新 fork 节点 Y 居中
+    positions.set(forkNode.id, { x: BASE_X + forkCol * COL_W, y: joinY });
+    // 更新 pre 节点 Y 居中
+    for (const id of preNodes) {
+      const pos = positions.get(id)!;
+      positions.set(id, { x: pos.x, y: joinY });
+    }
+  } else {
+    // ---- 串行工作流布局（原逻辑优化为拓扑排序） ----
+    const visited = new Set<string>();
+    const queue: string[] = [];
+    const startNode = wf.nodes.find((n) => n.type === "start");
+    if (startNode) queue.push(startNode.id);
+
+    let col = 0;
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      if (visited.has(id)) continue;
+      visited.add(id);
+      positions.set(id, { x: BASE_X + col * COL_W, y: BASE_Y });
+      col++;
+      const children = childrenOf.get(id) || [];
+      for (const child of children) {
+        if (!visited.has(child)) queue.push(child);
+      }
+    }
+
+    // 放置未被遍历到的孤立节点
+    for (const n of wf.nodes) {
+      if (!positions.has(n.id)) {
+        positions.set(n.id, { x: BASE_X + col * COL_W, y: BASE_Y });
+        col++;
+      }
+    }
+  }
+
+  const nodes: Node[] = wf.nodes.map((n) => ({
     id: n.id,
-    data: { 
+    data: {
       label: n.label,
       nodeType: n.type,
-      params: n.params
+      params: n.params,
     },
-    position: { x: 50 + (idx % 3) * 220, y: 50 + Math.floor(idx / 3) * 140 },
-    type: "default"
+    position: positions.get(n.id) || { x: 0, y: 0 },
+    type: "default",
   }));
 
   const edges: Edge[] = wf.edges.map((e) => ({
@@ -39,7 +158,7 @@ function wfToReactFlow(wf: ParsedWorkflow): { nodes: Node[]; edges: Edge[] } {
     source: e.from,
     target: e.to,
     label: e.condition ?? undefined,
-    animated: false
+    animated: false,
   }));
 
   return { nodes, edges };

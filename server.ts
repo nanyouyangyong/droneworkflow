@@ -120,6 +120,7 @@ appEventBus.subscribe("*", (event) => {
 function startTelemetryRelay() {
   const baseUrl = process.env.DRONE_CONTROL_BASE_URL || "http://127.0.0.1:4010";
   const apiKey = process.env.DRONE_CONTROL_API_KEY || "";
+  let failCount = 0;
 
   async function connect() {
     try {
@@ -128,15 +129,20 @@ function startTelemetryRelay() {
 
       const response = await fetch(`${baseUrl}/api/v1/events`, {
         headers,
-        signal: AbortSignal.timeout(0), // no timeout for SSE
+        // SSE 长连接，不设置超时
       });
 
       if (!response.ok || !response.body) {
-        console.warn(`SSE relay: failed to connect (${response.status}), retrying in 5s...`);
-        setTimeout(connect, 5000);
+        failCount++;
+        const retryDelay = Math.min(5000 * Math.ceil(failCount / 5), 60000);
+        if (failCount <= 3 || failCount % 10 === 0) {
+          console.warn(`SSE relay: failed to connect (${response.status}), retry #${failCount} in ${retryDelay / 1000}s...`);
+        }
+        setTimeout(connect, retryDelay);
         return;
       }
 
+      failCount = 0;
       console.log("SSE relay: connected to drone-control-service");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -173,15 +179,17 @@ function startTelemetryRelay() {
       console.warn("SSE relay: connection closed, reconnecting in 3s...");
       setTimeout(connect, 3000);
     } catch (err: any) {
-      if (err?.name !== "AbortError") {
-        console.warn(`SSE relay: error (${err?.message}), retrying in 5s...`);
+      failCount++;
+      const retryDelay = Math.min(5000 * Math.ceil(failCount / 5), 60000);
+      if (failCount <= 3 || failCount % 10 === 0) {
+        console.warn(`SSE relay: error (${err?.message}), retry #${failCount} in ${retryDelay / 1000}s...`);
       }
-      setTimeout(connect, 5000);
+      setTimeout(connect, retryDelay);
     }
   }
 
   // 延迟启动，等待 drone-control-service 就绪
-  setTimeout(connect, 2000);
+  setTimeout(connect, 3000);
 }
 
 startTelemetryRelay();

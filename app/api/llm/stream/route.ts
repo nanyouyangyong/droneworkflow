@@ -69,7 +69,7 @@ export async function POST(req: Request) {
         console.warn("Failed to save mock workflow to DB:", dbError);
       }
 
-      // 保存助手消息到数据库
+      // 保存助手消息到数据库（不含思考过程，mock 模式无思考内容）
       try {
         await ChatHistory.findOneAndUpdate(
           { sessionId: currentSessionId },
@@ -154,11 +154,14 @@ export async function POST(req: Request) {
             }
           }
 
-          // 保存助手消息到数据库
+          // 保存助手消息到数据库（包含思考过程，与前端 <think> 格式一致）
           try {
-            const assistantMessage = workflow 
+            const resultText = workflow 
               ? "已生成工作流，请在画布确认/调整后执行。"
               : "工作流解析失败，请重试。";
+            const assistantMessage = fullContent
+              ? `<think>${fullContent}</think>\n${resultText}`
+              : resultText;
               
             await ChatHistory.findOneAndUpdate(
               { sessionId: currentSessionId },

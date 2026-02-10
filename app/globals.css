@@ -63,3 +63,20 @@ body {
  .wf-progress-bar {
    animation: wf-progress-fill 0.7s ease-out forwards;
  }
+
+ /* 执行中的边 — 加粗虚线流动效果（ReactFlow animated 自带） */
+ .react-flow__edge.animated path {
+   stroke-dasharray: 5 5;
+   animation: wf-edge-flow 0.6s linear infinite;
+ }
+
+ @keyframes wf-edge-flow {
+   to { stroke-dashoffset: -10; }
+ }
+
+ /* 已完成节点入场动画 */
+ @keyframes wf-node-complete {
+   0% { transform: scale(1); }
+   50% { transform: scale(1.08); }
+   100% { transform: scale(1); }
+ }

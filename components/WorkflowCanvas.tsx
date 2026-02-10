@@ -547,14 +547,6 @@ export default function WorkflowCanvas() {
     setExecuting(true);
     resetExecutionState();
 
-    // 执行期间边变为动画状态
-    setEdges(eds => eds.map(e => ({
-      ...e,
-      animated: true,
-      style: { stroke: '#3b82f6', strokeWidth: 2 },
-      markerEnd: { type: MarkerType.ArrowClosed, color: '#3b82f6', width: 16, height: 16 },
-    })));
-
     try {
       const res = await fetch("/api/workflow/execute", {
         method: "POST",
@@ -563,13 +555,6 @@ export default function WorkflowCanvas() {
       });
 
       if (!res.ok) {
-        // 执行失败 — 边恢复默认
-        setEdges(eds => eds.map(e => ({
-          ...e,
-          animated: false,
-          style: { stroke: '#ef4444', strokeWidth: 2 },
-          markerEnd: { type: MarkerType.ArrowClosed, color: '#ef4444', width: 16, height: 16 },
-        })));
         setExecuting(false);
         return;
       }
@@ -588,16 +573,10 @@ export default function WorkflowCanvas() {
       });
     } catch (error) {
       console.error('Execute workflow failed:', error);
-      setEdges(eds => eds.map(e => ({
-        ...e,
-        animated: false,
-        style: { stroke: '#ef4444', strokeWidth: 2 },
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#ef4444', width: 16, height: 16 },
-      })));
     } finally {
       setExecuting(false);
     }
-  }, [workflow, executing, setActiveMissionId, setMissionState, upsertHistory, resetExecutionState, setEdges]);
+  }, [workflow, executing, setActiveMissionId, setMissionState, upsertHistory, resetExecutionState]);
   
   // 清理定时器
   useEffect(() => {
@@ -608,28 +587,70 @@ export default function WorkflowCanvas() {
     };
   }, []);
 
-  // 任务完成/失败时：清除 currentNode + 恢复边样式
+  // 任务完成/失败时：清除 currentNode
   useEffect(() => {
     if (!missionState) return;
     const { status } = missionState;
-    if (status === "completed") {
+    if (status === "completed" || status === "failed") {
       useAppStore.getState().setCurrentNode(null);
-      setEdges(eds => eds.map(e => ({
-        ...e,
-        animated: false,
-        style: { stroke: '#10b981', strokeWidth: 2 },
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#10b981', width: 16, height: 16 },
-      })));
-    } else if (status === "failed") {
-      useAppStore.getState().setCurrentNode(null);
-      setEdges(eds => eds.map(e => ({
-        ...e,
-        animated: false,
-        style: { stroke: '#ef4444', strokeWidth: 2 },
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#ef4444', width: 16, height: 16 },
-      })));
     }
-  }, [missionState?.status, setEdges]);
+  }, [missionState?.status]);
+
+  // 根据节点执行状态动态更新边样式（按执行顺序逐步标记）
+  const executedNodes = useAppStore((s) => s.executedNodes);
+  const failedNodes = useAppStore((s) => s.failedNodes);
+  const currentNode = useAppStore((s) => s.currentNode);
+
+  useEffect(() => {
+    if (executedNodes.size === 0 && failedNodes.size === 0 && !currentNode) return;
+
+    setEdges(eds => eds.map(e => {
+      const sourceExecuted = executedNodes.has(e.source);
+      const targetExecuted = executedNodes.has(e.target);
+      const sourceFailed = failedNodes.has(e.source);
+      const targetFailed = failedNodes.has(e.target);
+      const targetIsCurrent = currentNode === e.target;
+      const sourceIsCurrent = currentNode === e.source;
+
+      // 当前执行中的边：源节点已完成，目标节点正在执行
+      if ((sourceExecuted || sourceIsCurrent) && targetIsCurrent) {
+        return {
+          ...e,
+          animated: true,
+          style: { stroke: '#3b82f6', strokeWidth: 2.5 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#3b82f6', width: 18, height: 18 },
+        };
+      }
+
+      // 已完成的边：源和目标都已执行
+      if (sourceExecuted && targetExecuted) {
+        return {
+          ...e,
+          animated: false,
+          style: { stroke: '#10b981', strokeWidth: 2 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#10b981', width: 16, height: 16 },
+        };
+      }
+
+      // 失败的边：目标节点失败
+      if (targetFailed || sourceFailed) {
+        return {
+          ...e,
+          animated: false,
+          style: { stroke: '#ef4444', strokeWidth: 2 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#ef4444', width: 16, height: 16 },
+        };
+      }
+
+      // 未执行的边：保持默认样式
+      return {
+        ...e,
+        animated: false,
+        style: { stroke: '#94a3b8', strokeWidth: 1.5 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: '#94a3b8', width: 16, height: 16 },
+      };
+    }));
+  }, [executedNodes, failedNodes, currentNode, setEdges]);
 
   return (
     <div className="flex h-full flex-col">

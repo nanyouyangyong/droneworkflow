@@ -66,14 +66,16 @@ droneworkflow/
 ├── components/                  # React 组件
 │   ├── AuthGuard.tsx            # 认证守卫
 │   ├── ChatPanel.tsx            # 聊天面板
-│   ├── WorkflowCanvas.tsx       # 工作流画布（ReactFlow）
-│   ├── NodeLibrary.tsx          # 节点库
-│   ├── NodeEditor.tsx           # 节点编辑器
-│   ├── EdgeEditor.tsx           # 边编辑器
+│   ├── ConfirmDialog.tsx        # 确认对话框
 │   ├── ContextMenu.tsx          # 右键菜单
+│   ├── EdgeEditor.tsx           # 边编辑器
+│   ├── HistoryPanel.tsx         # 历史面板
 │   ├── LogPanel.tsx             # 日志面板
+│   ├── NodeEditor.tsx           # 节点编辑器
+│   ├── NodeLibrary.tsx          # 节点库
+│   ├── WorkflowCanvas.tsx       # 工作流画布（ReactFlow）
 │   ├── WorkflowHistory.tsx      # 工作流历史
-│   └── HistoryPanel.tsx         # 历史面板
+│   └── WorkflowNode.tsx         # 工作流节点渲染组件
 │
 ├── store/                       # 前端状态管理（Zustand）
 │   ├── useAppStore.ts           # 应用状态（消息/工作流/任务）
@@ -111,6 +113,7 @@ droneworkflow/
 │       │   ├── Mission.ts
 │       │   └── ChatHistory.ts
 │       └── mcp/                 # MCP 客户端管理
+│           ├── README.md        # MCP 模块说明文档
 │           ├── index.ts         # 统一导出
 │           ├── types.ts         # 类型定义
 │           ├── client.ts        # 单客户端封装（MCPClient）
@@ -151,11 +154,23 @@ droneworkflow/
 │
 ├── __tests__/                   # 测试
 │   ├── setup.ts                 # 全局配置（MSW + Mock）
+│   ├── infrastructure.test.ts   # 基础设施测试
 │   ├── mocks/                   # MSW Mock 处理器
+│   │   ├── handlers.ts          # 请求处理器
+│   │   └── server.ts            # Mock 服务器
 │   ├── unit/                    # 单元测试
+│   │   └── store/               # Store 测试
 │   └── integration/             # 集成测试
+│       ├── auth/                # 认证测试
+│       └── chat/                # 聊天测试
 │
-└── e2e/                         # Playwright E2E 测试
+├── e2e/                         # Playwright E2E 测试
+│   ├── auth.spec.ts             # 认证测试
+│   ├── workflow-creation.spec.ts # 工作流创建测试
+│   └── workflow-execution.spec.ts # 工作流执行测试
+│
+├── WORKFLOW_GUIDE.md            # 工作流使用指南
+└── 需求文档.md                  # 项目需求文档
 ```
 
 ---

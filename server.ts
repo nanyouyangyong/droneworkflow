@@ -7,6 +7,7 @@ import type { Request, Response } from "express";
 import type { Socket } from "socket.io";
 import { connectDB } from "@/lib/server/db";
 import { appEventBus } from "@/lib/server/event-bus";
+import { initRAG } from "@/lib/server/rag";
 
 const dev = process.env.NODE_ENV !== "production";
 const app = next({ dev });
@@ -23,6 +24,9 @@ try {
 } catch (error) {
   console.warn("MongoDB connection failed, some features may not work:", error);
 }
+
+// 初始化 RAG 知识库（异步，不阻塞启动）
+initRAG().catch(err => console.warn("RAG initialization failed:", err));
 
 const expressApp = express();
 

@@ -4,6 +4,7 @@ import type { ParsedWorkflow } from "@/lib/types";
 import { getFastLLM, isLLMConfigured } from "@/lib/server/llm";
 import { workflowCache, generateCacheKey } from "@/lib/server/cache";
 import { WORKFLOW_SYSTEM_PROMPT, createMockWorkflow, extractWorkflowJSON } from "@/lib/server/llmPrompts";
+import { retrieveContext } from "@/lib/server/rag";
 
 const parseInputSchema = z.object({
   userInput: z.string().min(1),
@@ -13,8 +14,17 @@ const parseInputSchema = z.object({
 async function parseWithLLM(userInput: string): Promise<ParsedWorkflow> {
   const llm = getFastLLM();
 
+  // RAG: 检索相关领域知识和历史工作流
+  let ragContext = "";
+  try {
+    ragContext = await retrieveContext(userInput);
+  } catch (ragErr) {
+    console.warn("RAG context retrieval failed in parseWithLLM:", ragErr);
+  }
+
   const messages = [
     new SystemMessage(WORKFLOW_SYSTEM_PROMPT),
+    ...(ragContext ? [new SystemMessage(`## 参考资料（根据用户任务检索）\n${ragContext}`)] : []),
     new HumanMessage(`请将以下无人机任务描述转换为工作流 JSON：\n\n${userInput}`)
   ];
 

@@ -5,6 +5,7 @@ import { getLLM, isLLMConfigured } from "@/lib/server/llm";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { v4 as uuidv4 } from "uuid";
 import { WORKFLOW_SYSTEM_PROMPT, createMockWorkflow, createMockParallelWorkflow, extractWorkflowJSON } from "@/lib/server/llmPrompts";
+import { retrieveContext } from "@/lib/server/rag";
 
 export const runtime = "nodejs";
 
@@ -110,8 +111,17 @@ export async function POST(req: Request) {
         try {
           const llm = getLLM();
           
+          // RAG: 检索相关领域知识和历史工作流
+          let ragContext = "";
+          try {
+            ragContext = await retrieveContext(userInput);
+          } catch (ragErr) {
+            console.warn("RAG context retrieval failed, proceeding without RAG:", ragErr);
+          }
+
           const messages = [
             new SystemMessage(WORKFLOW_SYSTEM_PROMPT),
+            ...(ragContext ? [new SystemMessage(`## 参考资料（根据用户任务检索）\n${ragContext}`)] : []),
             new HumanMessage(`请将以下无人机任务描述转换为工作流 JSON：\n\n${userInput}`)
           ];
           

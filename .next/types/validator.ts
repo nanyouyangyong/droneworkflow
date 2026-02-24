@@ -128,6 +128,33 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../app/api/knowledge/[id]/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/knowledge/[id]">> = Specific
+  const handler = {} as typeof import("../../app/api/knowledge/[id]/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/api/knowledge/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/knowledge">> = Specific
+  const handler = {} as typeof import("../../app/api/knowledge/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/api/knowledge/seed/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/knowledge/seed">> = Specific
+  const handler = {} as typeof import("../../app/api/knowledge/seed/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../app/api/llm/parse/route.ts
 {
   type __IsExpected<Specific extends RouteHandlerConfig<"/api/llm/parse">> = Specific

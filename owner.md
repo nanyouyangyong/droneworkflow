@@ -94,7 +94,7 @@ Drone Workflow 是一个**基于自然语言的无人机智能工作流编排系
 |------|---------|-------------------|
 | Express | 自定义服务器，集成 Socket.IO，成熟稳定 | Fastify：Socket.IO 集成不如 Express 成熟 |
 | Socket.IO | 多级房间（mission/parent/drone）+ 自动重连 + 广播 | ws：功能太基础，需自行实现房间和重连 |
-| LangChain + LangGraph | LLM 编排框架，支持流式输出、链式调用 | 直接调用 OpenAI SDK：缺少编排能力和提示词管理 |
+| LangChain + LangGraph | LLM 编排 + StateGraph 状态机执行引擎 + RAG 增强 | 直接调用 OpenAI SDK：缺少编排能力、状态管理和检索增强 |
 | DeepSeek | OpenAI 兼容 API，性价比高，中文能力强 | GPT-4：成本高；Claude：API 不兼容 |
 | MongoDB + Mongoose | 文档型数据库，Schema 灵活，适合工作流 JSON 存储 | PostgreSQL：工作流结构变化频繁，关系型不灵活 |
 | MCP SDK | Model Context Protocol 标准化工具调用，可扩展多种外部服务 | 自定义 RPC：缺乏标准化，不利于生态扩展 |
@@ -217,23 +217,20 @@ const subMissions = drones.map((d, idx) => ({
 
 ##### 难点 3：工作流图遍历 + 条件分支
 
-工作流不是简单的线性列表，而是 **DAG（有向无环图）**，包含条件分支和并行分支。
+工作流不是简单的线性列表，而是 **DAG（有向无环图）**，包含条件分支和并行分支。且工作流是 LLM 运行时动态生成的 JSON，不是编译期固定的图。
 
-**解决方案**：SubMissionRunner 使用 BFS 图遍历：
+**解决方案**：采用 LangGraph StateGraph 状态机执行引擎（替代早期的手写 BFS 遍历）：
 
-1. 从 `start` 节点开始，入队
-2. 出队一个节点，执行对应的 MCP 工具
-3. 如果是条件节点，评估条件，选择正确的出边
-4. 将后继节点入队
-5. 重复直到队列为空或遇到 `end` 节点
-
-节点类型到 MCP 工具的映射采用声明式配置（`NODE_TYPE_TO_MCP_TOOL`），新增节点类型只需添加一行映射。
+1. `buildWorkflowGraph()` 将 `ParsedWorkflow` JSON **动态转换**为 LangGraph StateGraph
+2. 每个节点类型对应一个 **action 函数**（签名 `(state, config) → Partial<Update>`）
+3. 条件分支通过 `addConditionalEdges()` **声明式路由**，读取状态值做判断
+4. **Annotation + Reducer** 自动累加日志、执行记录，节点只返回增量
+5. `compile({ checkpointer })` 注入 Checkpoint，每步自动存档，支持中断后恢复
+6. 新增节点类型只需在 `node-actions.ts` 添加一个 action 函数并注册到路由表
 
 ##### 难点 4：事件聚合与进度计算
 
 父任务需要实时聚合所有子任务的进度，并推送给前端。
-
-**解决方案**：
 
 ```
 SubMissionRunner → DroneChannel.emitProgress()
@@ -261,7 +258,8 @@ SubMissionRunner → DroneChannel.emitProgress()
 
 - **执行策略**：`parallel`（`Promise.allSettled`，一架失败不阻塞）/ `sequential`（依次执行）
 - **失败策略**：`fail_fast`（一架失败立即终止所有）/ `continue`（继续执行其余）
-- **MCP 降级**：MCP 工具调用失败时，SubMissionRunner 自动降级到本地模拟执行，记录 warning 日志
+- **MCP 降级**：MCP 工具调用失败时，每个 node action 自动降级到本地模拟执行，记录 warning 日志
+- **Checkpoint 中断恢复**：任务执行中断后，调用 `resume()` 从最近 checkpoint 继续执行，不重复已完成节点
 
 ---
 
@@ -291,4 +289,4 @@ SubMissionRunner → DroneChannel.emitProgress()
 
 ## 总结
 
-本项目的技术难度集中在**"多层抽象的一致性"**——从用户说一句话到多架无人机并行执行，跨越了 AI 解析、可视化编辑、任务编排、MCP 通信、硬件控制 5 个层次，每一层都需要正确的抽象边界和可靠的错误处理。
+本项目的技术难度集中在**“多层抽象的一致性”**——从用户说一句话到多架无人机并行执行，跨越了 AI 解析、RAG 检索增强、可视化编辑、LangGraph 状态机执行、MCP 通信、硬件控制 6 个层次，每一层都需要正确的抽象边界、可靠的错误处理和优雅的降级策略。

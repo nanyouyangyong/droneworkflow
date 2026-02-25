@@ -1,79 +1,25 @@
 // ============================================================================
-// SubMissionRunner — 单个子任务执行器
+// SubMissionRunner — 单个子任务执行器（LangGraph StateGraph 驱动）
 // 职责：执行一个工作流，操作一架无人机
 // 不知道自己是单机还是多机场景，只通过 DroneChannel 与无人机交互
+//
+// v2: 内部使用 LangGraph StateGraph 替代手写 BFS 图遍历
+//     外部接口（constructor、run()、SubMissionResult）完全不变
 // ============================================================================
 
-import type { ParsedWorkflow, WorkflowNode, SubMissionState } from "@/lib/types";
-import { DroneChannel, type DroneState } from "@/lib/server/drone-channel";
-
-// 节点类型到 MCP 工具的映射
-interface ToolMapping {
-  tool: string;
-  paramsMapper: (params: Record<string, unknown>, droneState: DroneState) => Record<string, any>;
-}
-
-const NODE_TYPE_TO_MCP_TOOL: Record<string, ToolMapping> = {
-  "起飞": {
-    tool: "drone:takeoff",
-    paramsMapper: (params) => ({ altitude: Number(params.altitude ?? 30) }),
-  },
-  "降落": {
-    tool: "drone:land",
-    paramsMapper: () => ({}),
-  },
-  "悬停": {
-    tool: "drone:hover",
-    paramsMapper: (params) => ({ duration: Number(params.duration ?? 5) }),
-  },
-  "飞行到点": {
-    tool: "drone:fly_to",
-    paramsMapper: (params, ds) => ({
-      lat: Number(params.lat ?? ds.position.lat),
-      lng: Number(params.lng ?? ds.position.lng),
-      altitude: Number(params.altitude ?? ds.altitude),
-    }),
-  },
-  "定时拍照": {
-    tool: "drone:take_photo",
-    paramsMapper: (params) => ({ count: Number(params.count ?? 1) }),
-  },
-  "录像": {
-    tool: "drone:record_video",
-    paramsMapper: (params) => ({ action: String(params.action ?? "start") }),
-  },
-  "电量检查": {
-    tool: "drone:check_battery",
-    paramsMapper: (params) => ({ threshold: Number(params.threshold ?? params.low ?? 30) }),
-  },
-  "返航": {
-    tool: "drone:return_home",
-    paramsMapper: () => ({}),
-  },
-  "地址解析": {
-    tool: "amap:maps_geo",
-    paramsMapper: (params) => ({ address: String(params.address ?? "") }),
-  },
-  "路径规划": {
-    tool: "amap:maps_direction_driving",
-    paramsMapper: (params) => ({
-      origin: String(params.origin ?? ""),
-      destination: String(params.destination ?? ""),
-    }),
-  },
-  "POI搜索": {
-    tool: "amap:maps_around",
-    paramsMapper: (params) => ({
-      location: String(params.location ?? ""),
-      keywords: String(params.keywords ?? ""),
-      radius: Number(params.radius ?? 1000),
-    }),
-  },
-  "天气查询": {
-    tool: "amap:maps_weather",
-    paramsMapper: (params) => ({ city: String(params.city ?? "") }),
-  },
-};
+import type { ParsedWorkflow, SubMissionState } from "@/lib/types";
+import { DroneChannel } from "@/lib/server/drone-channel";
+import {
+  buildWorkflowGraph,
+  validateWorkflowForGraph,
+  createInitialState,
+  type DroneWorkflowState,
+} from "@/lib/server/langgraph";
+import {
+  getCheckpointer,
+  createThreadConfig,
+  canResume,
+} from "@/lib/server/langgraph/checkpointer";
 
 export interface SubMissionResult {
   success: boolean;
@@ -93,206 +39,93 @@ export class SubMissionRunner {
     this.subMissionId = subMissionId;
   }
 
-  /** 执行工作流（BFS 图遍历） */
+  /** 执行工作流（LangGraph StateGraph 驱动，带 Checkpoint） */
   async run(): Promise<SubMissionResult> {
-    const wf = this.workflow;
-    const nodeMap = new Map(wf.nodes.map((n) => [n.id, n]));
-
-    const startNode = wf.nodes.find((n) => n.type === "start");
-    if (!startNode) {
-      this.channel.emitLog("error", "工作流缺少开始节点");
-      this.channel.emitStatus("failed", "工作流缺少开始节点");
+    // 1. 验证工作流结构
+    const validation = validateWorkflowForGraph(this.workflow);
+    if (!validation.valid) {
+      const errorMsg = `工作流验证失败: ${validation.errors.join("; ")}`;
+      this.channel.emitLog("error", errorMsg);
+      this.channel.emitStatus("failed", errorMsg);
       return this.buildResult(false, "failed");
     }
 
-    this.channel.emitStatus("running");
-    this.channel.emitLog("info", `子任务开始 [${this.channel.droneId}]`);
-
-    const visited = new Set<string>();
-    const queue: string[] = [startNode.id];
-    let executedCount = 0;
-    const totalNodes = wf.nodes.length;
-
-    while (queue.length > 0) {
-      const currentId = queue.shift()!;
-      if (visited.has(currentId)) continue;
-      visited.add(currentId);
-
-      const currentNode = nodeMap.get(currentId);
-      if (!currentNode) continue;
-
-      executedCount++;
-      const progress = Math.floor((executedCount / totalNodes) * 100);
-      this.channel.emitProgress(progress, currentId);
-      this.channel.emitLog("info", `执行节点: ${currentNode.label}`, currentId);
-
-      // 执行节点
-      const result = await this.executeNode(currentNode);
-
-      if (result.success) {
-        const level = currentNode.type === "电量检查" && this.channel.state.battery < 30 ? "warning" : "success";
-        this.channel.emitLog(level, result.message, currentId);
-      } else {
-        this.channel.emitLog("error", result.message, currentId);
-        this.channel.emitStatus("failed", result.message);
-        return this.buildResult(false, "failed");
-      }
-
-      // 找到下一个节点
-      const outEdges = wf.edges.filter((e) => e.from === currentId);
-      for (const edge of outEdges) {
-        if (this.evaluateCondition(edge.condition)) {
-          if (!visited.has(edge.to)) {
-            queue.push(edge.to);
-          }
-          break;
-        }
-      }
-    }
-
-    this.channel.emitProgress(100);
-    this.channel.emitLog("success", `子任务完成 [${this.channel.droneId}]，剩余电量: ${this.channel.state.battery}%`);
-    this.channel.emitStatus("completed");
-    return this.buildResult(true, "completed");
-  }
-
-  // ---- 节点执行 ----
-
-  private async executeNode(node: WorkflowNode): Promise<{ success: boolean; message: string }> {
-    const params = (node.params as Record<string, unknown>) || {};
-
-    switch (node.type) {
-      case "start":
-        return this.executeStartNode();
-      case "end":
-        return { success: true, message: "工作流结束" };
-      case "parallel_fork":
-        return { success: true, message: "并行分发" };
-      case "parallel_join":
-        return { success: true, message: "等待全部完成" };
-      case "条件判断":
-        return { success: true, message: "条件判断完成" };
-      case "区域巡检":
-        return this.executePatrolNode(params);
-      default:
-        return this.executeMappedNode(node, params);
-    }
-  }
-
-  private async executeStartNode(): Promise<{ success: boolean; message: string }> {
+    // 2. 构建并编译 StateGraph（注入 Checkpointer）
+    const checkpointer = getCheckpointer();
+    let compiledGraph;
     try {
-      const result = await this.channel.callTool("drone:connect_drone", {
-        droneId: this.channel.droneId,
+      compiledGraph = buildWorkflowGraph(this.workflow, this.channel, {
+        checkpointer,
       });
-      if (result?.success !== false) {
-        this.channel.updateState({ connected: true });
-        return { success: true, message: `无人机 ${this.channel.droneId} 已连接` };
-      }
-      this.channel.updateState({ connected: true });
-      return { success: true, message: "工作流开始" };
-    } catch {
-      this.channel.updateState({ connected: false });
-      return { success: true, message: "工作流开始（模拟模式）" };
+    } catch (buildError: any) {
+      const errorMsg = `StateGraph 构建失败: ${buildError.message}`;
+      this.channel.emitLog("error", errorMsg);
+      this.channel.emitStatus("failed", errorMsg);
+      return this.buildResult(false, "failed");
     }
-  }
 
-  private async executePatrolNode(params: Record<string, unknown>): Promise<{ success: boolean; message: string }> {
-    const areaName = String(params.areaName ?? "未知区域");
+    // 3. 准备初始状态 & thread 配置
+    const threadConfig = createThreadConfig(this.subMissionId);
+    const isResume = await canResume(this.subMissionId);
+
+    let initialInput;
+    if (isResume) {
+      // 恢复模式：传入 null 让 LangGraph 从最近 checkpoint 继续
+      initialInput = null;
+      this.channel.emitLog("info", `子任务恢复 [${this.channel.droneId}]（从 checkpoint 继续）`);
+    } else {
+      // 全新执行
+      initialInput = createInitialState(
+        this.channel.droneId,
+        this.subMissionId,
+        this.workflow.nodes.length
+      );
+    }
+
+    this.channel.emitStatus("running");
+    if (!isResume) {
+      this.channel.emitLog("info", `子任务开始 [${this.channel.droneId}]（LangGraph + Checkpoint）`);
+    }
+
+    // 4. 执行 StateGraph（每步自动 checkpoint）
+    let finalState: DroneWorkflowState;
     try {
-      await this.channel.callTool("drone:take_photo", { count: 3 });
-      const statusResult = await this.channel.callTool("drone:get_drone_status", {});
-      if (statusResult?.droneState) {
-        this.channel.updateState(statusResult.droneState);
-      }
-      return { success: true, message: `${areaName} 巡检完成` };
-    } catch {
-      this.channel.updateState({ battery: this.channel.state.battery - 8 });
-      return { success: true, message: `${areaName} 巡检完成（模拟）` };
-    }
-  }
-
-  private async executeMappedNode(node: WorkflowNode, params: Record<string, unknown>): Promise<{ success: boolean; message: string }> {
-    const toolMapping = NODE_TYPE_TO_MCP_TOOL[node.type];
-
-    if (toolMapping) {
-      try {
-        const mcpParams = toolMapping.paramsMapper(params, this.channel.state);
-        const result = await this.channel.callTool(toolMapping.tool, mcpParams);
-
-        // 处理电量检查的特殊返回
-        if (node.type === "电量检查" && result?.battery !== undefined) {
-          this.channel.updateState({ battery: result.battery });
-          return {
-            success: true,
-            message: result.isLow
-              ? `电量 ${result.battery}% 低于阈值 ${result.threshold}%，需要返航`
-              : `电量 ${result.battery}% 正常（阈值 ${result.threshold}%）`,
-          };
-        }
-
-        return {
-          success: result?.success !== false,
-          message: result?.message || result?.error || `执行 ${node.label} 完成`,
-        };
-      } catch {
-        return this.executeFallback(node, params);
-      }
+      finalState = await compiledGraph.invoke(initialInput, threadConfig);
+    } catch (execError: any) {
+      const errorMsg = `StateGraph 执行失败: ${execError.message}`;
+      this.channel.emitLog("error", errorMsg);
+      this.channel.emitStatus("failed", errorMsg);
+      return this.buildResult(false, "failed");
     }
 
-    return this.executeFallback(node, params);
-  }
+    // 5. 根据最终状态判断成功/失败
+    const success = finalState.success && !finalState.error;
 
-  // ---- 降级模拟执行 ----
-
-  private async executeFallback(node: WorkflowNode, params: Record<string, unknown>): Promise<{ success: boolean; message: string }> {
-    await delay(300);
-    const ds = this.channel.state;
-
-    switch (node.type) {
-      case "起飞": {
-        const altitude = Number(params.altitude ?? 30);
-        this.channel.updateState({ altitude, status: "flying", battery: ds.battery - 2 });
-        return { success: true, message: `起飞到 ${altitude} 米高度（模拟）` };
-      }
-      case "降落":
-        this.channel.updateState({ altitude: 0, status: "idle", battery: ds.battery - 1 });
-        return { success: true, message: "无人机已安全降落（模拟）" };
-      case "悬停": {
-        const duration = Number(params.duration ?? 5);
-        this.channel.updateState({ status: "hovering", battery: ds.battery - Math.ceil(duration / 10) });
-        return { success: true, message: `悬停 ${duration} 秒完成（模拟）` };
-      }
-      case "飞行到点": {
-        const lat = Number(params.lat ?? ds.position.lat);
-        const lng = Number(params.lng ?? ds.position.lng);
-        this.channel.updateState({ position: { lat, lng }, status: "flying", battery: ds.battery - 5 });
-        return { success: true, message: `已飞行到坐标 (${lat.toFixed(4)}, ${lng.toFixed(4)})（模拟）` };
-      }
-      case "返航":
-        this.channel.updateState({ position: { lat: 39.9042, lng: 116.4074 }, status: "returning", battery: ds.battery - 3 });
-        return { success: true, message: "已返回起飞点（模拟）" };
-      default:
-        return { success: true, message: `执行节点: ${node.label}（模拟）` };
+    if (success) {
+      this.channel.emitProgress(100);
+      this.channel.emitLog(
+        "success",
+        `子任务完成 [${this.channel.droneId}]，剩余电量: ${finalState.battery}%`
+      );
+      this.channel.emitStatus("completed");
+    } else {
+      this.channel.emitLog("error", finalState.error || "未知错误");
+      this.channel.emitStatus("failed", finalState.error || "未知错误");
     }
+
+    return this.buildResultFromState(success, finalState);
   }
 
-  // ---- 条件评估 ----
-
-  private evaluateCondition(condition: string | null | undefined): boolean {
-    if (!condition) return true;
-    const condLower = condition.toLowerCase();
-    const ds = this.channel.state;
-
-    const batteryLtMatch = condLower.match(/battery\s*<\s*(\d+)/);
-    if (batteryLtMatch) return ds.battery < parseInt(batteryLtMatch[1], 10);
-
-    const batteryGteMatch = condLower.match(/battery\s*>=\s*(\d+)/);
-    if (batteryGteMatch) return ds.battery >= parseInt(batteryGteMatch[1], 10);
-
-    const batteryGtMatch = condLower.match(/battery\s*>\s*(\d+)/);
-    if (batteryGtMatch) return ds.battery > parseInt(batteryGtMatch[1], 10);
-
-    return true;
+  /**
+   * 恢复之前中断的任务（从最近 checkpoint 继续执行）
+   * 调用方可直接调用 run()，内部自动检测是否有可恢复的 checkpoint
+   */
+  async resume(): Promise<SubMissionResult> {
+    const hasCheckpoint = await canResume(this.subMissionId);
+    if (!hasCheckpoint) {
+      this.channel.emitLog("warning", "没有可恢复的 checkpoint，将从头开始执行");
+    }
+    return this.run();
   }
 
   // ---- 辅助 ----
@@ -313,8 +146,31 @@ export class SubMissionRunner {
       },
     };
   }
-}
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  private buildResultFromState(
+    success: boolean,
+    graphState: DroneWorkflowState
+  ): SubMissionResult {
+    return {
+      success,
+      subMissionId: this.subMissionId,
+      droneId: this.channel.droneId,
+      finalState: {
+        subMissionId: this.subMissionId,
+        droneId: this.channel.droneId,
+        workflow: this.workflow,
+        status: success ? "completed" : "failed",
+        progress: graphState.progress,
+        logs: graphState.logs.map((l) => ({
+          ts: l.ts,
+          level: l.level,
+          message: l.message,
+          nodeId: l.nodeId,
+          droneId: this.channel.droneId,
+        })),
+        finishedAt: Date.now(),
+        error: graphState.error || undefined,
+      },
+    };
+  }
 }

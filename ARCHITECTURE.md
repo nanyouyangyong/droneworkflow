@@ -1,6 +1,6 @@
 # Drone Workflow 系统架构文档
 
-> 最后更新：2026-02-09
+> 最后更新：2026-02-25
 
 ---
 
@@ -18,8 +18,10 @@
 │  Next.js + Express + Socket.IO + AppEventBus                    │
 │  ├── app/api/workflow/execute  统一执行入口（单机/多机）         │
 │  ├── TaskOrchestrator         任务编排器                     │
-│  ├── SubMissionRunner(s)      子任务执行器（每架无人机一个）     │
+│  ├── SubMissionRunner(s)      子任务执行器（LangGraph 驱动）    │
+│  ├── LangGraph StateGraph     状态图执行引擎 + Checkpointer    │
 │  ├── DroneChannel(s)          无人机消息通道（每架一个）       │
+│  ├── RAG (知识检索增强)        向量检索 + 上下文注入           │
 │  └── AppEventBus → Socket.IO   事件桥接 + 多级房间推送       │
 └──────────────┬──────────────────────────────────────────────┘
                │ stdio (MCP 协议)
@@ -59,8 +61,12 @@ droneworkflow/
 │   └── api/                     # API 路由
 │       ├── auth/                # 认证（login/register/refresh/me）
 │       ├── chat/                # 聊天历史（CRUD + sessions）
-│       ├── llm/                 # LLM 解析（parse + stream）
+│       ├── llm/                 # LLM 解析（parse + stream，集成 RAG）
 │       ├── workflow/            # 工作流（save/list/execute/state/[id]）
+│       ├── knowledge/           # 知识库管理（CRUD + seed）
+│       │   ├── route.ts         # GET 列表 + POST 创建
+│       │   ├── [id]/route.ts    # GET/PUT/DELETE 单文档
+│       │   └── seed/route.ts    # 种子数据批量导入
 │       └── mission/             # 任务（list/[id]）
 │
 ├── components/                  # React 组件
@@ -111,7 +117,21 @@ droneworkflow/
 │       │   ├── User.ts
 │       │   ├── Workflow.ts
 │       │   ├── Mission.ts
-│       │   └── ChatHistory.ts
+│       │   ├── ChatHistory.ts
+│       │   └── KnowledgeDoc.ts  # 知识库文档模型
+│       ├── langgraph/           # LangGraph StateGraph 执行引擎
+│       │   ├── index.ts         # 模块入口
+│       │   ├── drone-state.ts   # Annotation 状态定义（DroneWorkflowAnnotation）
+│       │   ├── node-actions.ts  # 节点 action 函数（16 种节点类型）
+│       │   ├── graph-builder.ts # 动态图构建（ParsedWorkflow → StateGraph）
+│       │   └── checkpointer.ts  # Checkpoint 管理（MemorySaver + 中断恢复）
+│       ├── rag/                 # RAG 检索增强生成
+│       │   ├── index.ts         # RAG 入口（initRAG + retrieveContext）
+│       │   ├── embeddings.ts    # Embedding 模型（DeepSeek 兼容）
+│       │   ├── vector-store.ts  # 向量存储（MemoryVectorStore）
+│       │   ├── knowledge-loader.ts  # 知识库加载 & 文本分割
+│       │   ├── workflow-retriever.ts # 历史工作流检索
+│       │   └── context-builder.ts   # RAG 上下文组装
 │       └── mcp/                 # MCP 客户端管理
 │           ├── README.md        # MCP 模块说明文档
 │           ├── index.ts         # 统一导出
@@ -169,7 +189,17 @@ droneworkflow/
 │   ├── workflow-creation.spec.ts # 工作流创建测试
 │   └── workflow-execution.spec.ts # 工作流执行测试
 │
+├── data/knowledge/              # 知识库种子文档
+│   ├── drone-operations.md      # 无人机操作规范
+│   ├── flight-regulations.md    # 飞行法规与限制
+│   ├── node-params-guide.md     # 节点参数详细说明
+│   └── workflow-templates.md    # 标准工作流模板
+│
+├── scripts/
+│   └── seed-knowledge.ts        # 知识库种子数据初始化脚本
+│
 ├── WORKFLOW_GUIDE.md            # 工作流使用指南
+├── ARCHITECTURE.md              # 系统架构文档（本文件）
 └── 需求文档.md                  # 项目需求文档
 ```
 
@@ -205,21 +235,28 @@ droneworkflow/
 
 ---
 
-### 3.2 LLM 工作流解析模块
+### 3.2 LLM 工作流解析模块（集成 RAG）
 
 ```
 用户输入自然语言
+  │
+  ├── RAG 上下文检索 ──→ lib/server/rag/
+  │     ├── vector-store.ts → 相似度搜索知识文档 Top3
+  │     ├── workflow-retriever.ts → 匹配历史工作流 Top2
+  │     └── context-builder.ts → 组装为 SystemMessage
   │
   ├── 非流式 ──→ app/api/llm/parse/route.ts
   │                  │
   │                  ▼
   │              lib/server/llmParse.ts
   │                  ├── 检查缓存 (lib/server/cache.ts)
+  │                  ├── retrieveContext() → 注入 RAG 上下文
   │                  ├── LLM 可用 → parseWithLLM() → DeepSeek API
   │                  └── LLM 不可用 → createMockWorkflow()
   │
   └── 流式 ────→ app/api/llm/stream/route.ts
                      ├── SSE 流式输出
+                     ├── retrieveContext() → 注入 RAG 上下文
                      ├── LLM 可用 → getLLM().stream() → DeepSeek API
                      └── LLM 不可用 → createMockWorkflow()
                      │
@@ -231,14 +268,16 @@ droneworkflow/
 ```
 
 **关键设计**：
+- **RAG 增强**：LLM 调用前自动检索相关知识文档和历史工作流，注入为额外 SystemMessage
 - 提示词和 Mock 逻辑统一在 `llmPrompts.ts`，避免重复
 - 支持流式/非流式两种调用方式
 - 内存缓存避免重复 LLM 调用（10 分钟 TTL）
 - LLM 不可用时自动降级到 Mock 数据
+- RAG 降级策略：Embedding 不可用/向量库为空/检索超时(3s) → 跳过 RAG，不影响原有链路
 
 ---
 
-### 3.3 工作流执行引擎（多无人机编排）
+### 3.3 工作流执行引擎（LangGraph StateGraph 驱动）
 
 ```
 app/api/workflow/execute/route.ts
@@ -264,11 +303,46 @@ lib/server/task-orchestrator.ts（TaskOrchestrator）
   ▼
 lib/server/sub-mission-runner.ts（SubMissionRunner）
   │  ← 不知道自己是单机还是多机场景
-  ├── BFS 遍历工作流图
-  ├── 通过 DroneChannel 执行节点
-  ├── NODE_TYPE_TO_MCP_TOOL 映射表
-  ├── MCP 失败时降级模拟
-  └── 条件分支评估
+  │  ← 内部使用 LangGraph StateGraph 执行工作流
+  │
+  ├── validateWorkflowForGraph() → 验证工作流结构
+  ├── buildWorkflowGraph() → 动态构建 StateGraph
+  ├── graph.compile({ checkpointer }) → 注入 Checkpoint
+  ├── graph.invoke(initialState, threadConfig) → 状态图执行
+  └── resume() → 从 checkpoint 恢复中断的任务
+  │
+  ▼
+lib/server/langgraph/（LangGraph 执行引擎核心）
+  │
+  ├── drone-state.ts（Annotation 状态定义）
+  │     └── DroneWorkflowAnnotation
+  │         ├── 无人机状态: droneId, battery, altitude, position, ...
+  │         ├── 执行追踪: executedNodes[], nodeResults[] (reducer 自动累加)
+  │         ├── 日志: logs[] (reducer 自动累加)
+  │         └── 结果: success, error
+  │
+  ├── node-actions.ts（16 种节点 action 函数）
+  │     ├── 飞行控制: takeoff, land, hover, flyTo, returnHome
+  │     ├── 数据采集: takePhoto, recordVideo
+  │     ├── 安全检查: checkBattery, queryWeather
+  │     ├── 任务节点: patrol, genericMcp
+  │     └── 流程控制: start, end, parallelFork, parallelJoin, condition
+  │     │  签名: (state, config) → Partial<Update>
+  │     └── 通过 DroneChannel 调用 MCP，失败时降级模拟
+  │
+  ├── graph-builder.ts（动态图构建）
+  │     ├── buildWorkflowGraph(workflow, channel, options?)
+  │     │     ├── ParsedWorkflow → StateGraph → compile()
+  │     │     ├── addConditionalEdges() 声明式条件路由
+  │     │     └── 支持 checkpointer / interruptBefore / interruptAfter
+  │     └── validateWorkflowForGraph()
+  │
+  └── checkpointer.ts（Checkpoint 管理）
+        ├── getCheckpointer() → MemorySaver 单例
+        ├── createThreadConfig(threadId) → thread_id = subMissionId
+        ├── canResume(threadId) → 是否有可恢复的 checkpoint
+        ├── getLatestCheckpoint() / listCheckpoints()
+        └── 后续可替换为 MongoDB 持久化
   │
   ▼
 lib/server/drone-channel.ts（DroneChannel）
@@ -278,10 +352,14 @@ lib/server/drone-channel.ts（DroneChannel）
 ```
 
 **关键设计**：
+- **LangGraph StateGraph 驱动**：替代手写 BFS 图遍历，每个节点是一个 action 函数，框架管理状态流转
+- **Annotation + Reducer**：`executedNodes`、`nodeResults`、`logs` 使用 reducer 自动累加，节点返回增量即可
+- **动态图构建**：工作流是 LLM 运行时生成的 JSON，`buildWorkflowGraph()` 将 `ParsedWorkflow` 动态转换为 StateGraph
+- **Checkpoint 持久化**：每步自动存档，支持中断后从断点恢复（`thread_id = subMissionId`）
+- **条件路由**：`addConditionalEdges()` 声明式路由，替代硬编码正则匹配
 - **单机是多机的特例**：单机 = 1 个子任务的编排，代码路径完全一致
-- **高内聚**：DroneChannel（通信）、SubMissionRunner（执行）、TaskOrchestrator（编排）各司其职
+- **高内聚**：DroneChannel（通信）、LangGraph（执行）、TaskOrchestrator（编排）各司其职
 - **低耦合**：模块间通过 AppEventBus 事件通信，不直接引用
-- 节点类型 → MCP 工具的声明式映射
 - MCP 不可用时自动降级到本地模拟
 - 支持 parallel/sequential 执行策略和 fail_fast/continue 失败策略
 
@@ -392,7 +470,43 @@ store/
 
 ---
 
-### 3.7 数据模型
+### 3.7 RAG 检索增强模块
+
+```
+lib/server/rag/
+  │
+  ├── index.ts ← initRAG() + retrieveContext()
+  │     ├── 启动时从 MongoDB / data/knowledge/ 加载文档
+  │     └── LLM 调用前检索相关上下文
+  │
+  ├── embeddings.ts ← Embedding 模型
+  │     └── DeepSeek API（OpenAI 兼容）
+  │
+  ├── vector-store.ts ← 向量存储
+  │     └── MemoryVectorStore（启动时加载）
+  │
+  ├── knowledge-loader.ts ← 知识文档加载
+  │     ├── 优先从 MongoDB 加载
+  │     ├── DB 为空则从 data/knowledge/ 文件加载
+  │     └── RecursiveCharacterTextSplitter (chunkSize=800)
+  │
+  ├── workflow-retriever.ts ← 历史工作流检索
+  │     └── 优先匹配成功执行过的工作流 Top2
+  │
+  └── context-builder.ts ← 上下文组装
+        ├── 知识文档 Top3 + 历史工作流 Top2
+        └── 3 秒超时兜底
+```
+
+**关键设计**：
+- 启动时自动初始化，优先从 MongoDB 加载知识文档
+- 检索结果注入为额外 SystemMessage，增强 LLM 工作流生成质量
+- 全链路降级：Embedding 不可用 / 向量库为空 / 检索超时 → 跳过 RAG
+- 支持通过 API 和脚本管理知识库文档
+
+---
+
+### 3.8 数据模型
 
 ```
 MongoDB Collections:
@@ -400,12 +514,13 @@ MongoDB Collections:
 ├── workflows       { name, description, nodes[], edges[], createdAt }
 ├── missions        { missionId, workflowSnapshot, status, progress, logs[],
 │                     subMissions[], strategy, startedAt, completedAt }
-└── chathistories   { sessionId, messages[], workflowId }
+├── chathistories   { sessionId, messages[], workflowId }
+└── knowledgedocs   { title, content, category, tags[], embedding[] }
 ```
 
 ---
 
-### 3.8 多无人机消息分发架构
+### 3.9 多无人机消息分发架构
 
 ```
                         父任务房间: parent:xxx
@@ -487,7 +602,8 @@ cd .. && npm run dev                       # 端口 3000
 | 样式 | TailwindCSS |
 | 后端框架 | Express + Next.js API Routes |
 | 实时通信 | Socket.IO |
-| AI 编排 | LangGraph + LangChain |
+| AI 编排 | LangGraph StateGraph + Annotation + Checkpointer |
+| RAG | LangChain + MemoryVectorStore + DeepSeek Embeddings |
 | LLM | DeepSeek (OpenAI 兼容) |
 | MCP | @modelcontextprotocol/sdk |
 | 数据库 | MongoDB + Mongoose |

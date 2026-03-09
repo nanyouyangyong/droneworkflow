@@ -216,9 +216,27 @@ export async function flyToAction(
   config: NodeActionConfig
 ): Promise<ActionReturn> {
   const { channel, nodeId, nodeParams } = config;
-  const lat = Number(nodeParams.lat ?? state.position.lat);
-  const lng = Number(nodeParams.lng ?? state.position.lng);
+  let lat = Number(nodeParams.lat ?? state.position.lat);
+  let lng = Number(nodeParams.lng ?? state.position.lng);
   const altitude = Number(nodeParams.altitude ?? state.altitude);
+
+  // 检查协调信号：如果有 obstacle_detected，尝试避开障碍区域
+  const signals = state.sharedFlags?.signals as Array<{ type: string; payload: Record<string, any> }> | undefined;
+  if (signals) {
+    for (const sig of signals) {
+      if (sig.type === "obstacle_detected" && sig.payload?.avoidLat && sig.payload?.avoidLng) {
+        const avoidLat = Number(sig.payload.avoidLat);
+        const avoidLng = Number(sig.payload.avoidLng);
+        const avoidRadius = Number(sig.payload.avoidRadius ?? 0.001);
+        const dist = Math.sqrt((lat - avoidLat) ** 2 + (lng - avoidLng) ** 2);
+        if (dist < avoidRadius) {
+          lat += avoidRadius * 1.5;
+          lng += avoidRadius * 1.5;
+          channel.emitLog("warning", `[协调] 检测到障碍物，航线已调整避开 (${avoidLat.toFixed(4)}, ${avoidLng.toFixed(4)})`, nodeId);
+        }
+      }
+    }
+  }
 
   try {
     const result = await channel.callTool("drone:fly_to", { lat, lng, altitude });
@@ -381,11 +399,18 @@ export async function checkBatteryAction(
   const message = isLow
     ? `电量 ${state.battery}% 低于阈值 ${threshold}%，需要返航（模拟）`
     : `电量 ${state.battery}% 正常（阈值 ${threshold}%）（模拟）`;
+  const extraLogs: ExecutionLog[] = [];
+
+  // 如果电量低且有协调策略，记录协调信号提示
+  if (isLow && state.sharedFlags?.coordinationPolicy) {
+    extraLogs.push(log("info", `[协调] 电量低信号已标记，编排图将在下轮协调中处理`, nodeId));
+  }
+
   return {
     currentNodeId: nodeId,
     executedNodes: [nodeId],
     nodeResults: [{ nodeId, success: true, message, ts: Date.now() }],
-    logs: [log(level, message, nodeId)],
+    logs: [log(level, message, nodeId), ...extraLogs],
   };
 }
 

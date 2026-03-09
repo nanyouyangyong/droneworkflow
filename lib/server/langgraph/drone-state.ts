@@ -55,6 +55,12 @@ export const DroneWorkflowAnnotation = Annotation.Root({
     default: () => [],
   }),
 
+  // ---- 跨无人机协调（由编排图注入） ----
+  sharedFlags: Annotation<Record<string, any>>({
+    reducer: (prev, next) => ({ ...prev, ...next }),
+    default: () => ({}),
+  }),
+
   // ---- 最终结果 ----
   success: Annotation<boolean>,
   error: Annotation<string | null>,
@@ -84,6 +90,7 @@ export function createInitialState(
     nodeResults: [],
     progress: 0,
     totalNodes,
+    sharedFlags: {},
     logs: [],
     success: true,
     error: null,

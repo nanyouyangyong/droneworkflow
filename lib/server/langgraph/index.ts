@@ -31,3 +31,19 @@ export {
   listCheckpoints,
   canResume,
 } from "./checkpointer";
+
+export {
+  FleetAnnotation,
+  type FleetState,
+  type FleetUpdate,
+  type DroneSnapshot,
+  type CoordinationSignal,
+  type BarrierState,
+  type FleetDroneEntry,
+  createInitialFleetState,
+} from "./fleet-state";
+
+export {
+  buildFleetGraph,
+  type FleetGraphOptions,
+} from "./fleet-graph";

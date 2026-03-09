@@ -74,6 +74,41 @@ export type SubMissionState = {
   error?: string;
 };
 
+// ---- 多机协调策略（LLM 生成） ----
+
+// 协调信号类型
+export type CoordinationSignalType =
+  | "obstacle_detected"
+  | "area_cleared"
+  | "low_battery"
+  | "task_transfer"
+  | "rendezvous_ready"
+  | "custom";
+
+// 同步点定义
+export type SyncPointDef = {
+  barrierId: string;
+  drones: string[];          // 需要同步的无人机 ID 列表
+  afterNode: string;         // 在哪个节点后设置屏障
+  description?: string;
+};
+
+// 信号规则定义
+export type SignalRuleDef = {
+  trigger: string;           // 触发条件（例如 "battery < 20"）
+  signalType: CoordinationSignalType;
+  fromDrone: string;
+  toDrone: string | "*";     // "*" = 广播给所有无人机
+  payload?: Record<string, any>;
+};
+
+// 协调策略（由 LLM 生成，附在 TaskRequest 中）
+export type CoordinationPolicy = {
+  syncPoints?: SyncPointDef[];
+  signalRules?: SignalRuleDef[];
+  stateSharing?: "none" | "snapshot" | "realtime";
+};
+
 // 任务请求（统一入口，单机/多机兼容）
 export type TaskRequest = {
   missionId: string;
@@ -84,6 +119,7 @@ export type TaskRequest = {
   }>;
   strategy?: ExecutionStrategy;
   failurePolicy?: FailurePolicy;
+  coordinationPolicy?: CoordinationPolicy;
 };
 
 // 任务状态（兼容单机/多机）

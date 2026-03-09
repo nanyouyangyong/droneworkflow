@@ -172,7 +172,7 @@ Drone Workflow 是一个**基于自然语言的无人机智能工作流编排系
 
 ##### 难点分析
 
-这个模块之所以最难，是因为它同时涉及 **5 个维度**的复杂性：
+这个模块之所以最难，是因为它同时涉及 **6 个维度**的复杂性：
 
 ##### 难点 1：单机/多机统一抽象
 
@@ -201,19 +201,22 @@ const subMissions = drones.map((d, idx) => ({
 }));
 ```
 
-##### 难点 2：并发安全（多架无人机同时执行）
+##### 难点 2：并发安全 + 跨无人机状态同步
 
-多个 SubMissionRunner 并行执行时，不能共享全局状态，否则会出现竞态条件。
+多个 SubMissionRunner 并行执行时，既不能共享全局状态（竞态条件），又需要跨无人机状态感知（如 A 发现障碍物需通知 B 避让）。
 
 **解决方案**：
 
-| 层级 | 隔离机制 |
-|------|---------|
-| 执行层 | 每架无人机独立 `SubMissionRunner` 实例 |
-| 通信层 | 每架无人机独立 `DroneChannel` 实例，自动注入 `droneId` |
-| MCP 层 | `resolveDroneId(params)` 显式 `droneId` 优先，替代全局 `activeDroneId` 单例 |
+| 层级 | 隔离/协调机制 |
+|------|------------|
+| 编排层 | FleetGraph 编排图（多机并行时替代裸 `Promise.allSettled`） |
+| 状态同步 | FleetAnnotation 共享状态（droneSnapshots/signals/barriers） |
+| 协调信号 | 无人机 A 触发 obstacle_detected/low_battery → 无人机 B 响应 |
+| 注入机制 | 编排图将其他无人机快照 + 信号注入子图的 `sharedFlags` |
+| 执行层 | 每架无人机独立 `SubMissionRunner` + `DroneChannel` 实例 |
+| MCP 层 | `resolveDroneId(params)` 显式 `droneId` 优先 |
 | 控制服务 | `MemoryStore` 按 `droneId` 索引，Node.js 单线程无竞态 |
-| 推送层 | Socket.IO 多级房间（`mission:xxx`、`parent:xxx`、`drone:xxx`），日志不串台 |
+| 推送层 | Socket.IO 多级房间，日志不串台 |
 
 ##### 难点 3：工作流图遍历 + 条件分支
 
@@ -256,7 +259,9 @@ SubMissionRunner → DroneChannel.emitProgress()
 
 **解决方案**：
 
-- **执行策略**：`parallel`（`Promise.allSettled`，一架失败不阻塞）/ `sequential`（依次执行）
+- **执行策略**：`parallel`（FleetGraph 编排图并行，状态同步）/ `sequential`（依次执行）
+- **多机协调**：FleetGraph 编排图每轮执行后进入 coordinate 节点，处理协调信号和同步屏障
+- **CoordinationPolicy**：由 LLM 生成，支持同步点、信号规则、状态共享粒度配置
 - **失败策略**：`fail_fast`（一架失败立即终止所有）/ `continue`（继续执行其余）
 - **MCP 降级**：MCP 工具调用失败时，每个 node action 自动降级到本地模拟执行，记录 warning 日志
 - **Checkpoint 中断恢复**：任务执行中断后，调用 `resume()` 从最近 checkpoint 继续执行，不重复已完成节点
@@ -289,4 +294,4 @@ SubMissionRunner → DroneChannel.emitProgress()
 
 ## 总结
 
-本项目的技术难度集中在**“多层抽象的一致性”**——从用户说一句话到多架无人机并行执行，跨越了 AI 解析、RAG 检索增强、可视化编辑、LangGraph 状态机执行、MCP 通信、硬件控制 6 个层次，每一层都需要正确的抽象边界、可靠的错误处理和优雅的降级策略。
+本项目的技术难度集中在**“多层抽象的一致性”**——从用户说一句话到多架无人机并行执行，跨越了 AI 解析、RAG 检索增强、可视化编辑、LangGraph 状态机执行、FleetGraph 多机协调、MCP 通信、硬件控制 7 个层次，每一层都需要正确的抽象边界、可靠的错误处理和优雅的降级策略。

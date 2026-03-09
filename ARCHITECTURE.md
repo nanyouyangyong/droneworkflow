@@ -19,6 +19,7 @@
 │  ├── app/api/workflow/execute  统一执行入口（单机/多机）         │
 │  ├── TaskOrchestrator         任务编排器                     │
 │  ├── SubMissionRunner(s)      子任务执行器（LangGraph 驱动）    │
+│  ├── FleetGraph               多机编排图（状态同步 + 协调）   │
 │  ├── LangGraph StateGraph     状态图执行引擎 + Checkpointer    │
 │  ├── DroneChannel(s)          无人机消息通道（每架一个）       │
 │  ├── RAG (知识检索增强)        向量检索 + 上下文注入           │
@@ -119,12 +120,14 @@ droneworkflow/
 │       │   ├── Mission.ts
 │       │   ├── ChatHistory.ts
 │       │   └── KnowledgeDoc.ts  # 知识库文档模型
-│       ├── langgraph/           # LangGraph StateGraph 执行引擎
+│       ├── langgraph/           # LangGraph 执行引擎 + 多机编排
 │       │   ├── index.ts         # 模块入口
-│       │   ├── drone-state.ts   # Annotation 状态定义（DroneWorkflowAnnotation）
-│       │   ├── node-actions.ts  # 节点 action 函数（16 种节点类型）
+│       │   ├── drone-state.ts   # 单机 Annotation（DroneWorkflowAnnotation + sharedFlags）
+│       │   ├── node-actions.ts  # 节点 action 函数（16 种 + 协调信号响应）
 │       │   ├── graph-builder.ts # 动态图构建（ParsedWorkflow → StateGraph）
-│       │   └── checkpointer.ts  # Checkpoint 管理（MemorySaver + 中断恢复）
+│       │   ├── checkpointer.ts  # Checkpoint 管理（MemorySaver + 中断恢复）
+│       │   ├── fleet-state.ts   # 多机编排共享状态（FleetAnnotation）
+│       │   └── fleet-graph.ts   # 编排图构建（OrchestratorGraph）
 │       ├── rag/                 # RAG 检索增强生成
 │       │   ├── index.ts         # RAG 入口（initRAG + retrieveContext）
 │       │   ├── embeddings.ts    # Embedding 模型（DeepSeek 兼容）
@@ -283,7 +286,7 @@ droneworkflow/
 app/api/workflow/execute/route.ts
   │
   ├── 单机格式: { workflow, droneId? }
-  └── 多机格式: { drones: [{droneId, workflow},...], strategy?, failurePolicy? }
+  └── 多机格式: { drones: [...], strategy?, failurePolicy?, coordinationPolicy? }
   │
   ▼
 lib/server/executeGraph.ts（薄代理层）
@@ -296,8 +299,9 @@ lib/server/task-orchestrator.ts（TaskOrchestrator）
   ├── execute(request)
   │     ├── 创建父任务 + 子任务列表
   │     ├── 订阅子任务事件 → 聚合进度
-  │     └── 根据 strategy 启动 SubMissionRunner(s)
-  │           ├── parallel: Promise.allSettled
+  │     └── 根据 strategy 启动执行
+  │           ├── parallel(多机): FleetGraph 编排图（状态同步）
+  │           ├── parallel(单机): SubMissionRunner 直接执行
   │           └── sequential: 依次执行
   │
   ▼
@@ -319,6 +323,7 @@ lib/server/langgraph/（LangGraph 执行引擎核心）
   │         ├── 无人机状态: droneId, battery, altitude, position, ...
   │         ├── 执行追踪: executedNodes[], nodeResults[] (reducer 自动累加)
   │         ├── 日志: logs[] (reducer 自动累加)
+  │         ├── sharedFlags: 跨无人机协调信息（编排图注入）
   │         └── 结果: success, error
   │
   ├── node-actions.ts（16 种节点 action 函数）
@@ -328,7 +333,8 @@ lib/server/langgraph/（LangGraph 执行引擎核心）
   │     ├── 任务节点: patrol, genericMcp
   │     └── 流程控制: start, end, parallelFork, parallelJoin, condition
   │     │  签名: (state, config) → Partial<Update>
-  │     └── 通过 DroneChannel 调用 MCP，失败时降级模拟
+  │     ├── 通过 DroneChannel 调用 MCP，失败时降级模拟
+  │     └── 关键节点支持 sharedFlags 协调信号响应（如 flyTo 自动避障）
   │
   ├── graph-builder.ts（动态图构建）
   │     ├── buildWorkflowGraph(workflow, channel, options?)
@@ -337,12 +343,27 @@ lib/server/langgraph/（LangGraph 执行引擎核心）
   │     │     └── 支持 checkpointer / interruptBefore / interruptAfter
   │     └── validateWorkflowForGraph()
   │
-  └── checkpointer.ts（Checkpoint 管理）
-        ├── getCheckpointer() → MemorySaver 单例
-        ├── createThreadConfig(threadId) → thread_id = subMissionId
-        ├── canResume(threadId) → 是否有可恢复的 checkpoint
-        ├── getLatestCheckpoint() / listCheckpoints()
-        └── 后续可替换为 MongoDB 持久化
+  ├── checkpointer.ts（Checkpoint 管理）
+  │     ├── getCheckpointer() → MemorySaver 单例
+  │     ├── createThreadConfig(threadId) → thread_id = subMissionId
+  │     ├── canResume(threadId) → 是否有可恢复的 checkpoint
+  │     └── 后续可替换为 MongoDB 持久化
+  │
+  ├── fleet-state.ts（多机编排共享状态）
+  │     └── FleetAnnotation
+  │         ├── droneSnapshots: 各无人机实时状态快照 (key=droneId)
+  │         ├── signals: 协调信号队列 (obstacle/low_battery/task_transfer/...)
+  │         ├── barriers: 同步屏障状态 (key=barrierId)
+  │         ├── droneEntries / completedDrones / results
+  │         └── coordinationPolicy: 协调策略（LLM 生成）
+  │
+  └── fleet-graph.ts（多机编排图）
+        ├── buildFleetGraph(missionId, drones, policy, options)
+        ├── dispatch: 初始化各无人机状态快照
+        ├── execute: 并行执行子任务（注入 sharedFlags）
+        ├── coordinate: 处理协调信号 + 检查同步屏障
+        ├── aggregate: 聚合结果（未完成则循环回 execute）
+        └── evaluateSignalRules(): 根据策略规则评估信号触发
   │
   ▼
 lib/server/drone-channel.ts（DroneChannel）
@@ -357,11 +378,15 @@ lib/server/drone-channel.ts（DroneChannel）
 - **动态图构建**：工作流是 LLM 运行时生成的 JSON，`buildWorkflowGraph()` 将 `ParsedWorkflow` 动态转换为 StateGraph
 - **Checkpoint 持久化**：每步自动存档，支持中断后从断点恢复（`thread_id = subMissionId`）
 - **条件路由**：`addConditionalEdges()` 声明式路由，替代硬编码正则匹配
+- **FleetGraph 多机编排**：多机并行时通过编排图实现跨无人机状态同步与协调（替代裸 `Promise.allSettled`）
+- **协调信号**：无人机 A 状态变化可触发信号通知无人机 B（避障/低电量/任务转移）
+- **sharedFlags 注入**：编排图将其他无人机快照 + 协调信号注入到子图的 `sharedFlags`，节点可读取响应
 - **单机是多机的特例**：单机 = 1 个子任务的编排，代码路径完全一致
-- **高内聚**：DroneChannel（通信）、LangGraph（执行）、TaskOrchestrator（编排）各司其职
+- **高内聚**：DroneChannel（通信）、LangGraph（执行）、FleetGraph（协调）、TaskOrchestrator（编排）各司其职
 - **低耦合**：模块间通过 AppEventBus 事件通信，不直接引用
 - MCP 不可用时自动降级到本地模拟
 - 支持 parallel/sequential 执行策略和 fail_fast/continue 失败策略
+- CoordinationPolicy 由 LLM 生成，支持同步点、信号规则、状态共享粒度配置
 
 ---
 
@@ -553,7 +578,8 @@ Socket.IO 房间类型：
 | 层级 | 机制 | 说明 |
 |------|------|------|
 | MCP 层 | 显式 `droneId` 参数 | 不再依赖全局状态，天然并发安全 |
-| 执行层 | `Promise.allSettled` 并行 | 一架失败不阻塞其他 |
+| 执行层 | FleetGraph 编排图并行 | 状态同步 + 一架失败不阻塞其他 |
+| 协调层 | 协调信号 + 同步屏障 | 跨无人机状态感知与响应 |
 | 控制服务 | `MemoryStore` 按 droneId 索引 | Node.js 单线程无竞态 |
 | 命令层 | `idempotencyKey` | 网络重试不重复执行 |
 | 推送层 | Socket.IO 多级房间 | 日志/状态推送不串台 |
@@ -602,7 +628,7 @@ cd .. && npm run dev                       # 端口 3000
 | 样式 | TailwindCSS |
 | 后端框架 | Express + Next.js API Routes |
 | 实时通信 | Socket.IO |
-| AI 编排 | LangGraph StateGraph + Annotation + Checkpointer |
+| AI 编排 | LangGraph StateGraph + Annotation + Checkpointer + FleetGraph |
 | RAG | LangChain + MemoryVectorStore + DeepSeek Embeddings |
 | LLM | DeepSeek (OpenAI 兼容) |
 | MCP | @modelcontextprotocol/sdk |

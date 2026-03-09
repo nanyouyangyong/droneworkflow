@@ -12,10 +12,14 @@ import type {
   ExecutionStrategy,
   FailurePolicy,
   ParsedWorkflow,
+  CoordinationPolicy,
 } from "@/lib/types";
 import { DroneChannel } from "@/lib/server/drone-channel";
 import { SubMissionRunner, type SubMissionResult } from "@/lib/server/sub-mission-runner";
 import { appEventBus, type AppEvent } from "@/lib/server/event-bus";
+import { buildFleetGraph } from "@/lib/server/langgraph/fleet-graph";
+import { createInitialFleetState } from "@/lib/server/langgraph/fleet-state";
+import { getCheckpointer, createThreadConfig } from "@/lib/server/langgraph/checkpointer";
 import {
   upsertMission,
   getMission,
@@ -40,6 +44,7 @@ export class TaskOrchestrator {
       drones,
       strategy = "parallel",
       failurePolicy = "continue",
+      coordinationPolicy,
     } = request;
 
     // 构建子任务列表
@@ -79,7 +84,7 @@ export class TaskOrchestrator {
     const unsubscribe = this.subscribeSubMissionEvents(missionId, subMissions);
 
     // 后台异步执行（不阻塞 API 响应）
-    void this.runSubMissions(missionId, drones, subMissions, strategy, failurePolicy)
+    void this.runSubMissions(missionId, drones, subMissions, strategy, failurePolicy, coordinationPolicy)
       .finally(() => unsubscribe());
 
     return missionState;
@@ -93,17 +98,22 @@ export class TaskOrchestrator {
     subMissions: SubMissionState[],
     strategy: ExecutionStrategy,
     failurePolicy: FailurePolicy,
+    coordinationPolicy?: CoordinationPolicy,
   ): Promise<void> {
-    const runners = drones.map((d, idx) => {
-      const subMissionId = subMissions[idx].subMissionId;
-      const channel = new DroneChannel(d.droneId, subMissionId);
-      return new SubMissionRunner(channel, d.workflow, subMissionId);
-    });
-
     let results: SubMissionResult[];
 
-    if (strategy === "parallel") {
-      // 并行执行所有子任务
+    if (strategy === "parallel" && drones.length > 1) {
+      // 多机并行：使用 OrchestratorGraph（支持状态同步与协调）
+      results = await this.runWithFleetGraph(
+        missionId, drones, subMissions, coordinationPolicy,
+      );
+    } else if (strategy === "parallel") {
+      // 单机并行（等价于直接执行）
+      const runners = drones.map((d, idx) => {
+        const subMissionId = subMissions[idx].subMissionId;
+        const channel = new DroneChannel(d.droneId, subMissionId);
+        return new SubMissionRunner(channel, d.workflow, subMissionId);
+      });
       const settled = await Promise.allSettled(
         runners.map((runner) => runner.run())
       );
@@ -123,6 +133,11 @@ export class TaskOrchestrator {
       });
     } else {
       // 顺序执行
+      const runners = drones.map((d, idx) => {
+        const subMissionId = subMissions[idx].subMissionId;
+        const channel = new DroneChannel(d.droneId, subMissionId);
+        return new SubMissionRunner(channel, d.workflow, subMissionId);
+      });
       results = [];
       for (const [idx, runner] of runners.entries()) {
         try {
@@ -164,6 +179,69 @@ export class TaskOrchestrator {
 
     // 聚合最终结果
     this.aggregateResults(missionId, results, subMissions);
+  }
+
+  // ---- FleetGraph 编排执行（多机并行 + 状态同步） ----
+
+  private async runWithFleetGraph(
+    missionId: string,
+    drones: Array<{ droneId: string; workflow: ParsedWorkflow }>,
+    subMissions: SubMissionState[],
+    coordinationPolicy?: CoordinationPolicy,
+  ): Promise<SubMissionResult[]> {
+    const policy = coordinationPolicy || { stateSharing: "snapshot" as const };
+    const checkpointer = getCheckpointer();
+
+    // 构建编排图
+    const fleetGraph = buildFleetGraph(missionId, drones, policy, { checkpointer });
+
+    // 准备初始状态
+    const initialState = createInitialFleetState(missionId, drones, policy);
+
+    // 使用 missionId 作为 thread_id
+    const threadConfig = createThreadConfig(`fleet_${missionId}`);
+
+    try {
+      const finalState = await fleetGraph.invoke(initialState, threadConfig);
+
+      // 从编排图最终状态提取各无人机的 SubMissionResult
+      const results: SubMissionResult[] = drones.map((d, idx) => {
+        const subMissionId = subMissions[idx].subMissionId;
+        const result = finalState.results[d.droneId];
+        if (result) return result;
+
+        // 兜底：无人机在编排图中没有产生结果
+        return {
+          success: false,
+          subMissionId,
+          droneId: d.droneId,
+          finalState: {
+            ...subMissions[idx],
+            status: "failed" as MissionStatus,
+            error: "编排图未返回该无人机结果",
+            finishedAt: Date.now(),
+          },
+        };
+      });
+
+      return results;
+    } catch (err: any) {
+      console.error("[FleetGraph] 编排图执行失败:", err);
+      appendMissionLog(missionId, "error", `编排图执行失败: ${err.message}`);
+
+      // 全部标记为失败
+      return drones.map((d, idx) => ({
+        success: false,
+        subMissionId: subMissions[idx].subMissionId,
+        droneId: d.droneId,
+        finalState: {
+          ...subMissions[idx],
+          status: "failed" as MissionStatus,
+          error: `FleetGraph error: ${err.message}`,
+          finishedAt: Date.now(),
+        },
+      }));
+    }
   }
 
   // ---- 事件订阅与聚合 ----
